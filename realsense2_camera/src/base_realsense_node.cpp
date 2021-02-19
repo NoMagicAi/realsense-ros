@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cctype>
 #include <mutex>
+#include <chrono>
 
 using namespace realsense2_camera;
 using namespace ddynamic_reconfigure;
@@ -248,6 +249,7 @@ void BaseRealSenseNode::publishTopics()
     publishStaticTransforms();
     publishIntrinsics();
     startMonitoring();
+    nomagicSetup();
     ROS_INFO_STREAM("RealSense Node Is Up!");
 }
 
@@ -945,6 +947,99 @@ void BaseRealSenseNode::setupPublishers()
     }
 }
 
+bool BaseRealSenseNode::nomagicFramesetHasSubscribers(const rs2::frameset& frameset) {
+    for (auto it = frameset.begin(); it != frameset.end(); ++it) {
+        auto f = (*it);
+        auto stream_type = f.get_profile().stream_type();
+        auto stream_index = f.get_profile().stream_index();
+        stream_index_pair stream = {stream_type, stream_index};
+        auto& info_publisher = _info_publisher.at(stream);
+        auto& image_publisher = _image_publishers.at(stream);
+
+        bool has_subscribers = (info_publisher.getNumSubscribers() != 0)
+                            || (image_publisher.first.getNumSubscribers() != 0);
+        if (has_subscribers) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void BaseRealSenseNode::nomagicSetup()
+{
+    for (auto& stream : IMAGE_STREAMS) {
+        if (!_enable[stream]) {
+            continue;
+        }
+
+        std::string stream_name(STREAM_NAME(stream)); // infra2
+        std::stringstream service_name;
+        service_name << stream_name << "/get_latest_frame";
+
+        // Trampoline to pass stream parameter.
+        boost::function<bool(GetLatestFrame::Request&, GetLatestFrame::Response&)> callback =
+                [=](GetLatestFrame::Request& request, GetLatestFrame::Response& response) {
+            return nomagicGetLatestFrameCallback(stream, request, response);
+        };
+
+        nomagic_get_latest_frame_servers.insert({stream, _node_handle.advertiseService(service_name.str(), callback)});
+        nomagic_frame_queue.insert({stream, rs2::frame_queue(_fps[stream], true)});
+    }
+
+}
+
+bool BaseRealSenseNode::nomagicGetLatestFrameCallback(stream_index_pair stream,
+                                                      GetLatestFrame::Request& request,
+                                                      GetLatestFrame::Response& response)
+{
+    auto& queue = nomagic_frame_queue[stream];
+
+    rs2::frame frame;
+    while (queue.poll_for_frame(&frame)) {
+        assert(frame.is<rs2::frameset>());
+        for (const NamedFilter& named_filter : _filters) {
+            frame = named_filter._filter->process(frame);
+        }
+    }
+
+    response.image = *nomagicFrameToMessage(stream, frame);
+    return true;
+}
+
+sensor_msgs::ImagePtr BaseRealSenseNode::nomagicFrameToMessage(stream_index_pair stream, rs2::frame& frame) {
+    // This code is a refactored chunk of publishFrame.
+
+
+    assert(frame.is<rs2::video_frame>());
+    assert(false);
+
+    auto vframe = frame.as<rs2::video_frame>();
+    auto width = vframe.get_width();
+    auto height = vframe.get_height();
+    auto bpp = vframe.get_bytes_per_pixel();
+    auto& buffer = _image[stream];
+
+    buffer.create(height, width, buffer.type()); // This is lazy and won't reallocate if not needed.
+    buffer.data = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(frame.get_data()));
+
+    if (frame.is<rs2::depth_frame>()) {
+        // Note: fix_depth_scale returns it's second argument
+        // TODO: probably a deep copy is done here, should be easy to optimize it out
+        buffer = fix_depth_scale(buffer, _depth_scaled_image[stream]);
+    }
+
+    sensor_msgs::ImagePtr img;
+    img = cv_bridge::CvImage(std_msgs::Header(), _encoding.at(stream.first), buffer).toImageMsg();
+    img->width = width;
+    img->height = height;
+    img->is_bigendian = false;
+    img->step = width * bpp;
+    img->header.frame_id = _optical_frame_id.at(stream); // Not sure about this, but probably it does not matter for us.
+    img->header.stamp = ros::Time::now(); // This is a simplification, does not handle case when _sync_frames == false
+
+    return img;
+}
+
 void BaseRealSenseNode::publishAlignedDepthToOthers(rs2::frameset frames, const ros::Time& t)
 {
     for (auto it = frames.begin(); it != frames.end(); ++it)
@@ -1581,11 +1676,29 @@ void BaseRealSenseNode::frame_callback(rs2::frame frame)
                 clip_depth(depth_frame, _clipping_distance);
             }
 
-            ROS_DEBUG("num_filters: %d", static_cast<int>(_filters.size()));
-            for (std::vector<NamedFilter>::const_iterator filter_it = _filters.begin(); filter_it != _filters.end(); filter_it++)
-            {
-                ROS_DEBUG("Applying filter: %s", filter_it->_name.c_str());
-                frameset = filter_it->_filter->process(frameset);
+            // TODO(prybicki): Understand whether and when stream_type, stream_index may change after applying filters.
+            bool apply_filters = !nomagic_lazy_frame_filtering || nomagicFramesetHasSubscribers(frameset);
+            if (apply_filters) {
+                ROS_DEBUG("num_filters: %d", static_cast<int>(_filters.size()));
+                // MEASURE TIME and see if the computations is actually invoked here in this thread
+                auto beg = std::chrono::high_resolution_clock::now();
+                for (std::vector<NamedFilter>::const_iterator filter_it = _filters.begin(); filter_it != _filters.end(); filter_it++)
+                {
+                    ROS_DEBUG("Applying filter: %s", filter_it->_name.c_str());
+                    frameset = filter_it->_filter->process(frameset);
+                }
+                auto end = std::chrono::high_resolution_clock::now();
+                std::chrono::duration<float, std::ratio<1,1>> diff = end-beg;
+                std::cout << "Filtering took: " << diff.count() << std::endl;
+            }
+            else {
+                for (auto it = frameset.begin(); it != frameset.end(); ++it) {
+                    auto f = (*it);
+                    auto stream_type = f.get_profile().stream_type();
+                    auto stream_index = f.get_profile().stream_index();
+                    stream_index_pair sip = {stream_type, stream_index};
+                    nomagic_frame_queue[sip].enqueue(f);
+                }
             }
 
             ROS_DEBUG("List of frameset after applying filters: size: %d", static_cast<int>(frameset.size()));

@@ -17,6 +17,8 @@
 #include <tf2_ros/static_transform_broadcaster.h>
 #include <condition_variable>
 
+#include <realsense2_camera/GetLatestFrame.h>
+
 #include <queue>
 #include <mutex>
 #include <atomic>
@@ -245,6 +247,11 @@ namespace realsense2_camera
         void publish_temperature();
         void publish_frequency_update();
 
+        void nomagicSetup();
+        bool nomagicGetLatestFrameCallback(stream_index_pair stream, GetLatestFrame::Request& request, GetLatestFrame::Response& response);
+        bool nomagicFramesetHasSubscribers(const rs2::frameset& frameset);
+        sensor_msgs::ImagePtr nomagicFrameToMessage(stream_index_pair stream, rs2::frame& frame);
+
         rs2::device _dev;
         std::map<stream_index_pair, rs2::sensor> _sensors;
         std::map<std::string, std::function<void(rs2::frame)>> _sensors_callback;
@@ -326,6 +333,13 @@ namespace realsense2_camera
         sensor_msgs::PointCloud2 _msg_pointcloud;
         std::vector< unsigned int > _valid_pc_indices;
 
+        bool nomagic_lazy_frame_filtering = true;
+        std::map<stream_index_pair, ros::ServiceServer> nomagic_get_latest_frame_servers;
+
+        // Frame queues are accessed from multiple threads,
+        // but don't need external synchronization
+        // as their methods are thread-safe.
+        std::map<stream_index_pair, rs2::frame_queue> nomagic_frame_queue;
     };//end class
 
 }
