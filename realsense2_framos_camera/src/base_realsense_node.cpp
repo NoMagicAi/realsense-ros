@@ -873,6 +873,7 @@ void BaseRealSenseNode::publishAlignedDepthToOthers(rs2::frameset frames, const 
         auto& info_publisher = _depth_aligned_info_publisher.at(sip);
         auto& image_publisher = _depth_aligned_image_publishers.at(sip);
 
+        image_publisher.second->tick();
         if(0 != info_publisher.getNumSubscribers() ||
            0 != image_publisher.first.getNumSubscribers())
         {
@@ -2263,6 +2264,18 @@ void BaseRealSenseNode::publish_temperature()
                 ROS_DEBUG_STREAM("Failed checking for temperature." << std::endl << e.what());
             }
         }
+    }
+}
+
+void BaseRealSenseNode::publish_frequency_update()
+{
+    for (auto &image_publisher : _image_publishers)
+    {
+        image_publisher.second.second->update();
+    }
+    for (auto& image_publisher : _depth_aligned_image_publishers)
+    {
+        image_publisher.second.second->update();
     }
 }
 
