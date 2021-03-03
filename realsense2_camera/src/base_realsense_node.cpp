@@ -1583,28 +1583,14 @@ void BaseRealSenseNode::frame_callback(rs2::frame frame)
                 clip_depth(depth_frame, _clipping_distance);
             }
 
-            // TODO(prybicki): Understand whether and when stream_type, stream_index may change after applying filters.
-            bool apply_filters = !nomagic_lazy_frame_filtering || nomagicFramesetHasSubscribers(frameset);
-            if (apply_filters) {
+            nomagicStoreFramesetForLazyProcessing(frameset);
+            bool apply_filters_now = nomagicFramesetHasSubscribers(frameset) || !nomagic_lazy_frame_filtering;
+            if (apply_filters_now) {
                 ROS_DEBUG("num_filters: %d", static_cast<int>(_filters.size()));
-                // MEASURE TIME and see if the computations is actually invoked here in this thread
-                auto beg = std::chrono::high_resolution_clock::now();
                 for (std::vector<NamedFilter>::const_iterator filter_it = _filters.begin(); filter_it != _filters.end(); filter_it++)
                 {
                     ROS_DEBUG("Applying filter: %s", filter_it->_name.c_str());
                     frameset = filter_it->_filter->process(frameset);
-                }
-                auto end = std::chrono::high_resolution_clock::now();
-                std::chrono::duration<float, std::ratio<1,1>> diff = end-beg;
-                std::cout << "Filtering took: " << diff.count() << std::endl;
-            }
-            else {
-                for (auto it = frameset.begin(); it != frameset.end(); ++it) {
-                    auto f = (*it);
-                    auto stream_type = f.get_profile().stream_type();
-                    auto stream_index = f.get_profile().stream_index();
-                    stream_index_pair sip = {stream_type, stream_index};
-                    nomagic_frame_queue[sip].enqueue(f);
                 }
             }
 
@@ -2514,7 +2500,6 @@ private:
     InternalClock::time_point start;
 };
 
-
 void BaseRealSenseNode::nomagicSetup()
 {
     for (auto& stream : IMAGE_STREAMS) {
@@ -2522,25 +2507,34 @@ void BaseRealSenseNode::nomagicSetup()
             continue;
         }
 
+
         std::string stream_name(STREAM_NAME(stream)); // infra2
         std::stringstream service_name;
         service_name << stream_name << "/get_latest_frame";
 
-        // Trampoline to pass stream parameter.
+        // Trampoline to pass stream parameter to the callback.
         boost::function<bool(GetLatestFrame::Request&, GetLatestFrame::Response&)> callback =
                 [=](GetLatestFrame::Request& request, GetLatestFrame::Response& response) {
             return nomagicGetLatestFrameCallback(stream, request, response);
         };
 
         nomagic_get_latest_frame_servers.insert({stream, _node_handle.advertiseService(service_name.str(), callback)});
-        nomagic_frame_queue.insert({stream, rs2::frame_queue(10, true)});
+
+        // NOTE: The size of the frame queue is set to 8, because that's
+        // the minimal number of frames to make the temporal filter work reasonably
+        // where reasonable == having persistence settings working as expected
+        // and reasonable != equivalent to filtering (and thus accumulating) every frame.
+        // Details: librealsense/src/proc/temporal-filter.cpp
+        nomagic_frame_queue.insert({stream, rs2::frame_queue(4, true)});
+
+        ROS_INFO("[NOMAGIC] Successfully started service %s", service_name.str().c_str());
     }
 
 }
 
-bool BaseRealSenseNode::nomagicFramesetHasSubscribers(const rs2::frameset& frameset) {
-    for (auto it = frameset.begin(); it != frameset.end(); ++it) {
-        auto f = (*it);
+bool BaseRealSenseNode::nomagicFramesetHasSubscribers(const rs2::frameset& frameset)
+{
+    for (auto && f : frameset) {
         auto stream_type = f.get_profile().stream_type();
         auto stream_index = f.get_profile().stream_index();
         stream_index_pair stream = {stream_type, stream_index};
@@ -2560,41 +2554,56 @@ bool BaseRealSenseNode::nomagicGetLatestFrameCallback(stream_index_pair stream,
                                                       GetLatestFrame::Request& request,
                                                       GetLatestFrame::Response& response)
 {
-    Clock clock;
-    Clock all;
+    nomagicResetTemporalFilter();
 
-
+    int frames_processed = 0;
     auto& queue = nomagic_frame_queue[stream];
-    std::cout << "Queue: " << clock.getElapsedSecs() << std::endl;
 
-    int count = 0;
-    rs2::frame frame;
-    all.restart();
-    clock.restart();
-    while (queue.poll_for_frame(&frame)) {
-        std::cout << "Polling " << clock.getElapsedSecs() << std::endl;
-        assert(frame.is<rs2::frameset>());
-        for (const NamedFilter& named_filter : _filters) {
-            clock.restart();
-            frame = named_filter._filter->process(frame);
-            std::cout << "Filter " << named_filter._name << ": " << clock.getElapsedSecs() << std::endl;
+    // Wait as long as needed for the first frame
+    rs2::frame frame = queue.wait_for_frame();
+    do {
+
+        // If we don't receive any frame this may be because
+        // - None arrived yet
+        // - We received all available
+        bool frame_received = queue.poll_for_frame(&frame);
+        if (!frame_received) {
+            if (frames_processed > 0) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
         }
-        count += 1;
+
+        // It may look like we're mindlessly overwriting the frame here
+        // but the 'real' purpose is to accumulate sufficient history in the temporal filter
+        nomagicApplyFiltersToFrame(frame);
+        frames_processed += 1;
+
     }
-    std::cout << "Filtering ALL: " << all.getElapsedSecs() << std::endl;
-    std::cout << "Frames: " << count << std::endl;
-    std::cout << "=======================================" << std::endl;
+    while (queue.poll_for_frame(&frame));
 
     response.image = *nomagicFrameToMessage(stream, frame);
     return true;
 }
 
-sensor_msgs::ImagePtr BaseRealSenseNode::nomagicFrameToMessage(stream_index_pair stream, rs2::frame& frame) {
+void BaseRealSenseNode::nomagicApplyFiltersToFrame(rs2::frame &frame)
+{
+    // TODO: this filtering could be probably a bit smarter:
+    // TODO: apply spatial filter only to the last frame?
+
+    // NOTE: It's okay to apply filter on RGB frame, because that's what ros-realsense originally does
+    // I guess that somewhere later it is implemented to be a no-op.
+    for (const NamedFilter& named_filter : _filters) {
+        frame = named_filter._filter->process(frame);
+    }
+
+}
+
+sensor_msgs::ImagePtr BaseRealSenseNode::nomagicFrameToMessage(stream_index_pair stream, rs2::frame& frame)
+{
     // This code is a refactored chunk of publishFrame.
-
-
     assert(frame.is<rs2::video_frame>());
-    assert(false);
 
     auto vframe = frame.as<rs2::video_frame>();
     auto width = vframe.get_width();
@@ -2607,7 +2616,6 @@ sensor_msgs::ImagePtr BaseRealSenseNode::nomagicFrameToMessage(stream_index_pair
 
     if (frame.is<rs2::depth_frame>()) {
         // Note: fix_depth_scale returns it's second argument
-        // TODO: probably a deep copy is done here, should be easy to optimize it out
         buffer = fix_depth_scale(buffer, _depth_scaled_image[stream]);
     }
 
@@ -2621,4 +2629,26 @@ sensor_msgs::ImagePtr BaseRealSenseNode::nomagicFrameToMessage(stream_index_pair
     img->header.stamp = ros::Time::now(); // This is a simplification, does not handle case when _sync_frames == false
 
     return img;
+}
+
+void BaseRealSenseNode::nomagicResetTemporalFilter()
+{
+    // Temporal filter resets after changing any of its parameters (even to the same value).
+    for (const NamedFilter& named_filter : _filters) {
+        if (named_filter._name == "temporal") {
+            auto value = named_filter._filter->get_option(RS2_OPTION_FILTER_SMOOTH_ALPHA);
+            named_filter._filter->set_option(RS2_OPTION_FILTER_SMOOTH_ALPHA, value);
+            return;
+        }
+    }
+}
+
+void BaseRealSenseNode::nomagicStoreFramesetForLazyProcessing(rs2::frameset& frameset)
+{
+    for (auto && f : frameset) {
+        auto stream_type = f.get_profile().stream_type();
+        auto stream_index = f.get_profile().stream_index();
+        stream_index_pair sip = {stream_type, stream_index};
+        nomagic_frame_queue[sip].enqueue(f);
+    }
 }

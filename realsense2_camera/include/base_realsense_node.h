@@ -251,6 +251,9 @@ namespace realsense2_camera
         bool nomagicGetLatestFrameCallback(stream_index_pair stream, GetLatestFrame::Request& request, GetLatestFrame::Response& response);
         bool nomagicFramesetHasSubscribers(const rs2::frameset& frameset);
         sensor_msgs::ImagePtr nomagicFrameToMessage(stream_index_pair stream, rs2::frame& frame);
+        void nomagicResetTemporalFilter();
+        void nomagicApplyFiltersToFrame(rs2::frame& frame);
+        void nomagicStoreFramesetForLazyProcessing(rs2::frameset&);
 
         rs2::device _dev;
         std::map<stream_index_pair, rs2::sensor> _sensors;
