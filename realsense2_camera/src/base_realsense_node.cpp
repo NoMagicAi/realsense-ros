@@ -2500,6 +2500,38 @@ private:
     InternalClock::time_point start;
 };
 
+void BaseRealSenseNode::nomagicSetupService(stream_index_pair stream, bool is_aligned_depth)
+{
+    std::string stream_name = STREAM_NAME(stream); // name + [index]: color, depth, infra1, infra2, etc.
+
+    std::string full_service_name = is_aligned_depth
+                                  ? "aligned_depth_to" + stream_name
+                                  : stream_name + "/get_latest_frame";
+
+    auto& service_container = is_aligned_depth
+                            ? nomagic_get_latest_aligned_frame_servers
+                            : nomagic_get_latest_frame_servers;
+
+        // Trampoline to pass stream parameter to the callback.
+    boost::function<bool(GetLatestFrame::Request&, GetLatestFrame::Response&)> callback =
+            [=](GetLatestFrame::Request& request, GetLatestFrame::Response& response) {
+        return nomagicGetLatestFrameCallback(stream, is_aligned_depth, request, response);
+    };
+
+    service_container.insert({stream, _node_handle.advertiseService(full_service_name, callback)});
+
+    // NOTE: The size of the frame queue is set to 8, because that's
+    // the minimal number of frames to make the temporal filter work reasonably
+    // where reasonable == having persistence settings working as expected
+    // and reasonable != equivalent to filtering (and thus accumulating) every frame.
+    // Details: librealsense/src/proc/temporal-filter.cpp
+    if (!is_aligned_depth) {
+        nomagic_frame_queue.insert({stream, rs2::frame_queue(8, true)});
+    }
+
+    ROS_INFO_STREAM("[NOMAGIC] Successfully started service " << full_service_name);
+}
+
 void BaseRealSenseNode::nomagicSetup()
 {
     for (auto& stream : IMAGE_STREAMS) {
@@ -2507,27 +2539,12 @@ void BaseRealSenseNode::nomagicSetup()
             continue;
         }
 
+        nomagicSetupService(stream, false);
 
-        std::string stream_name(STREAM_NAME(stream)); // infra2
-        std::stringstream service_name;
-        service_name << stream_name << "/get_latest_frame";
-
-        // Trampoline to pass stream parameter to the callback.
-        boost::function<bool(GetLatestFrame::Request&, GetLatestFrame::Response&)> callback =
-                [=](GetLatestFrame::Request& request, GetLatestFrame::Response& response) {
-            return nomagicGetLatestFrameCallback(stream, request, response);
-        };
-
-        nomagic_get_latest_frame_servers.insert({stream, _node_handle.advertiseService(service_name.str(), callback)});
-
-        // NOTE: The size of the frame queue is set to 8, because that's
-        // the minimal number of frames to make the temporal filter work reasonably
-        // where reasonable == having persistence settings working as expected
-        // and reasonable != equivalent to filtering (and thus accumulating) every frame.
-        // Details: librealsense/src/proc/temporal-filter.cpp
-        nomagic_frame_queue.insert({stream, rs2::frame_queue(4, true)});
-
-        ROS_INFO("[NOMAGIC] Successfully started service %s", service_name.str().c_str());
+        bool advertise_aligned_depth = (_align_depth && (stream != DEPTH) && (stream != CONFIDENCE) && stream.second < 2);
+        if (advertise_aligned_depth) {
+            nomagicSetupService(stream, true);
+        }
     }
 
 }
@@ -2550,7 +2567,7 @@ bool BaseRealSenseNode::nomagicFramesetHasSubscribers(const rs2::frameset& frame
     return false;
 }
 
-bool BaseRealSenseNode::nomagicGetLatestFrameCallback(stream_index_pair stream,
+bool BaseRealSenseNode::nomagicGetLatestFrameCallback(stream_index_pair stream, bool is_aligned_depth,
                                                       GetLatestFrame::Request& request,
                                                       GetLatestFrame::Response& response)
 {
@@ -2562,26 +2579,16 @@ bool BaseRealSenseNode::nomagicGetLatestFrameCallback(stream_index_pair stream,
     // Wait as long as needed for the first frame
     rs2::frame frame = queue.wait_for_frame();
     do {
-
-        // If we don't receive any frame this may be because
-        // - None arrived yet
-        // - We received all available
-        bool frame_received = queue.poll_for_frame(&frame);
-        if (!frame_received) {
-            if (frames_processed > 0) {
-                break;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            continue;
-        }
-
-        // It may look like we're mindlessly overwriting the frame here
-        // but the 'real' purpose is to accumulate sufficient history in the temporal filter
         nomagicApplyFiltersToFrame(frame);
         frames_processed += 1;
-
     }
     while (queue.poll_for_frame(&frame));
+
+    if (is_aligned_depth) {
+        throw std::runtime_error("Alignment not implemented yet");
+//        nomagicAlignFrameToDepth()
+    }
+    // TODO: align depth
 
     response.image = *nomagicFrameToMessage(stream, frame);
     return true;
@@ -2592,17 +2599,55 @@ void BaseRealSenseNode::nomagicApplyFiltersToFrame(rs2::frame &frame)
     // TODO: this filtering could be probably a bit smarter:
     // TODO: apply spatial filter only to the last frame?
 
-    // NOTE: It's okay to apply filter on RGB frame, because that's what ros-realsense originally does
+    // NOTE: It's okay to apply a depth filter on RGB frame, because that's what ros-realsense originally does
     // I guess that somewhere later it is implemented to be a no-op.
+
+    // It may look like we're mindlessly overwriting the frame here
+    // but the 'real' purpose is to accumulate sufficient history in the temporal filter
     for (const NamedFilter& named_filter : _filters) {
         frame = named_filter._filter->process(frame);
     }
 
 }
 
+void BaseRealSenseNode::nomagicAlignFrameToDepth(rs2::frameset& frameset)
+{
+//    // This code is a modified and refactored chunk of publishAlignedDepthToOthers
+//    auto stream_type = frame.get_profile().stream_type();
+//    auto stream_index = frame.get_profile().stream_index();
+//    stream_index_pair sip{stream_type, stream_index};
+//    std::shared_ptr<rs2::align> align;
+//
+//    // Skip depth (makes no sense to align depth to depth)
+//    // Skip 'sibling' streams like infra2, for some reason, ros-realsense does so.
+//    if (RS2_STREAM_DEPTH == stream_type || stream_index > 1) {
+//        return;
+//    }
+//
+//    // Make sure align filter is allocated.
+//    try {
+//        align = _align.at(stream_type);
+//    }
+//    catch(const std::out_of_range& e) {
+//        ROS_DEBUG_STREAM("[NOMAGIC] Allocate align filter for:" << rs2_stream_to_string(sip.first) << sip.second);
+//        align = (_align[stream_type] = std::make_shared<rs2::align>(stream_type));
+//    }
+//
+//    // Apply alignment filter
+//    frame = frame.apply_filter(*align);
+//
+//    // Apply colorizer filter if present
+//    for (const auto & _filter : _filters) {
+//        if (_filter._name == "colorizer") {
+//            _filter._filter->process(frame);
+//            break;
+//        }
+//    }
+}
+
 sensor_msgs::ImagePtr BaseRealSenseNode::nomagicFrameToMessage(stream_index_pair stream, rs2::frame& frame)
 {
-    // This code is a refactored chunk of publishFrame.
+    // This code is a modified and refactored chunk of publishFrame.
     assert(frame.is<rs2::video_frame>());
 
     auto vframe = frame.as<rs2::video_frame>();
