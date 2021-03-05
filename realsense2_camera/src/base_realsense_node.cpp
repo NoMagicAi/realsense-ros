@@ -2547,7 +2547,7 @@ void BaseRealSenseNode::nomagicSetup()
 
 bool BaseRealSenseNode::nomagicFramesetHasSubscribers(const rs2::frameset& frameset)
 {
-    for (auto && f : frameset) {
+    for (auto&& f : frameset) {
         auto stream_type = f.get_profile().stream_type();
         auto stream_index = f.get_profile().stream_index();
         stream_index_pair stream = {stream_type, stream_index};
@@ -2570,34 +2570,28 @@ bool BaseRealSenseNode::nomagicGetLatestFrameCallback(stream_index_pair stream, 
                                                       GetLatestFrame::Request& request,
                                                       GetLatestFrame::Response& response)
 {
+    auto queue = nomagicGetNonEmptyFramesetQueue();
+
     // RGB and Infra frames don't need any processing:
-    if (stream != DEPTH) {
-        std::lock_guard<std::mutex> lock(nomagic_frameset_queue_mutex);
-        rs2::frame frame = nomagic_frameset_queue.back();
-        response.image = *nomagicFrameToMessage(stream, frame);
+    if (stream != DEPTH && !is_aligned_depth) {
+        rs2::frameset frameset = nomagic_frameset_queue.back();
+        response.image = *nomagicFrameToMessage(stream, nomagicFramesetToFrame(stream, frameset));
         return true;
     }
 
     // Now we're handling either depth or aligned depth:
 
     nomagicResetTemporalFilter();
-    auto queue = nomagicGetNonEmptyFramesetQueue();
     rs2::frameset frameset = nomagicApplyFilters(std::move(queue));
 
 
-    if (is_aligned_depth) {
-        frameset = nomagicAlignFrameToDepth(stream, frameset);
-    }
+    rs2::frame final_frame = is_aligned_depth
+                           ? nomagicAlignFrameToDepth(stream, frameset)
+                           : nomagicFramesetToFrame(stream, frameset);
 
-    for (auto && frame : frameset) {
-        auto stream_type = frame.get_profile().stream_type();
-        auto stream_index = frame.get_profile().stream_index();
-        if (stream == std::make_pair(stream_type, stream_index)) {
-            response.image = *nomagicFrameToMessage(stream, frame);
-            return true;
-        }
-    }
-    return false;
+
+    response.image = *nomagicFrameToMessage(is_aligned_depth ? DEPTH : stream, final_frame);
+    return true;
 }
 
 rs2::frameset BaseRealSenseNode::nomagicApplyFilters(boost::circular_buffer<rs2::frameset>&& queue)
@@ -2619,7 +2613,7 @@ rs2::frameset BaseRealSenseNode::nomagicApplyFilters(boost::circular_buffer<rs2:
 
 }
 
-rs2::frameset BaseRealSenseNode::nomagicAlignFrameToDepth(stream_index_pair stream, rs2::frameset& frameset)
+rs2::frame BaseRealSenseNode::nomagicAlignFrameToDepth(stream_index_pair stream, rs2::frameset frameset)
 {
     // This code is a modified and refactored chunk of publishAlignedDepthToOthers
 
@@ -2627,7 +2621,7 @@ rs2::frameset BaseRealSenseNode::nomagicAlignFrameToDepth(stream_index_pair stre
     // Skip 'sibling' streams like infra2, because ros-realsense does so for an unknown reason.
     if (RS2_STREAM_DEPTH == stream.first || stream.second > 1) {
         ROS_WARN_STREAM("[NOMAGIC] Attempted an unexpected align to depth operation. Check source code for details");
-        return frameset;
+        return nomagicFramesetToFrame(stream, frameset);
     }
 
     // Make sure align filter is allocated.
@@ -2649,10 +2643,11 @@ rs2::frameset BaseRealSenseNode::nomagicAlignFrameToDepth(stream_index_pair stre
             return _filter._filter->process(aligned_depth);
         }
     }
+
     return aligned_depth;
 }
 
-sensor_msgs::ImagePtr BaseRealSenseNode::nomagicFrameToMessage(stream_index_pair stream, rs2::frame& frame)
+sensor_msgs::ImagePtr BaseRealSenseNode::nomagicFrameToMessage(stream_index_pair stream, rs2::frame frame)
 {
     // This code is a modified and refactored chunk of publishFrame.
     assert(frame.is<rs2::video_frame>());
@@ -2678,7 +2673,7 @@ sensor_msgs::ImagePtr BaseRealSenseNode::nomagicFrameToMessage(stream_index_pair
     img->is_bigendian = false;
     img->step = width * bpp;
     img->header.frame_id = _optical_frame_id.at(stream); // Not sure about this, but probably it does not matter for us.
-    img->header.stamp = ros::Time::now(); // This is a simplification, does not handle case when _sync_frames == false
+    img->header.stamp = ros::Time::now(); // This is a simplification, does not handle the case when _sync_frames == false
 
     return img;
 }
@@ -2695,7 +2690,7 @@ void BaseRealSenseNode::nomagicResetTemporalFilter()
     }
 }
 
-void BaseRealSenseNode::nomagicStoreFramesetForLazyProcessing(rs2::frameset& frameset)
+void BaseRealSenseNode::nomagicStoreFramesetForLazyProcessing(rs2::frameset frameset)
 {
     std::lock_guard<std::mutex> lock(nomagic_frameset_queue_mutex);
 
@@ -2714,4 +2709,17 @@ boost::circular_buffer<rs2::frameset> BaseRealSenseNode::nomagicGetNonEmptyFrame
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
+}
+
+rs2::frame BaseRealSenseNode::nomagicFramesetToFrame(stream_index_pair stream, rs2::frameset frameset)
+{
+    for (auto frame : frameset) {
+        auto stream_type = frame.get_profile().stream_type();
+        auto stream_index = frame.get_profile().stream_index();
+        if (stream == std::make_pair(stream_type, stream_index)) {
+            return frame;
+        }
+    }
+    // This probably indicates a logic error in processing in the caller code.
+    throw std::runtime_error("[NOMAGIC] Stream frame not found in the frameset");
 }
