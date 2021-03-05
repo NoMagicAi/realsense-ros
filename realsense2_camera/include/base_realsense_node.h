@@ -18,6 +18,7 @@
 #include <condition_variable>
 
 #include <realsense2_camera/GetLatestFrame.h>
+#include <boost/circular_buffer.hpp>
 
 #include <queue>
 #include <mutex>
@@ -252,10 +253,11 @@ namespace realsense2_camera
         bool nomagicFramesetHasSubscribers(const rs2::frameset& frameset);
         sensor_msgs::ImagePtr nomagicFrameToMessage(stream_index_pair stream, rs2::frame& frame);
         void nomagicResetTemporalFilter();
-        void nomagicApplyFiltersToFrame(rs2::frame& frame);
+        rs2::frameset nomagicApplyFilters(boost::circular_buffer<rs2::frameset>&& queue);
         void nomagicStoreFramesetForLazyProcessing(rs2::frameset&);
         void nomagicSetupService(stream_index_pair stream, bool is_aligned_depth);
-        void nomagicAlignFrameToDepth(rs2::frameset& frameset);
+        rs2::frameset nomagicAlignFrameToDepth(stream_index_pair stream, rs2::frameset& frameset);
+        boost::circular_buffer<rs2::frameset> nomagicGetNonEmptyFramesetQueue();
 
         rs2::device _dev;
         std::map<stream_index_pair, rs2::sensor> _sensors;
@@ -342,11 +344,8 @@ namespace realsense2_camera
         std::map<stream_index_pair, ros::ServiceServer> nomagic_get_latest_frame_servers;
         std::map<stream_index_pair, ros::ServiceServer> nomagic_get_latest_aligned_frame_servers;
 
-        // Frame queues are accessed from multiple threads,
-        // but don't need external synchronization
-        // as their methods are thread-safe.
-        std::map<stream_index_pair, rs2::frame_queue> nomagic_frame_queue;
-        std::map<stream_index_pair, rs2::frame_queue> nomagic_aligned_frame_queue;
+        std::mutex nomagic_frameset_queue_mutex;
+            boost::circular_buffer<rs2::frameset> nomagic_frameset_queue;
     };//end class
 
 }
