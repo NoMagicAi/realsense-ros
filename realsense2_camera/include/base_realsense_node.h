@@ -341,6 +341,7 @@ namespace realsense2_camera
         sensor_msgs::PointCloud2 _msg_pointcloud;
         std::vector< unsigned int > _valid_pc_indices;
 
+        bool nomagic_skip_spatial_filter_for_inner_frames = true;
         bool nomagic_lazy_frame_filtering = true;
         std::map<stream_index_pair, ros::ServiceServer> nomagic_get_latest_frame_servers;
         std::map<stream_index_pair, ros::ServiceServer> nomagic_get_latest_aligned_frame_servers;
