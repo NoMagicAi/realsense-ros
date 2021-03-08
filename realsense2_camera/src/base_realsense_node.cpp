@@ -712,6 +712,8 @@ void BaseRealSenseNode::getParameters()
     _pnh.param("angular_velocity_cov", _angular_velocity_cov, static_cast<double>(0.01));
     _pnh.param("hold_back_imu_for_frames", _hold_back_imu_for_frames, HOLD_BACK_IMU_FOR_FRAMES);
     _pnh.param("publish_odom_tf", _publish_odom_tf, PUBLISH_ODOM_TF);
+
+    nomagicGetParameters();
 }
 
 void BaseRealSenseNode::setupDevice()
@@ -1584,7 +1586,7 @@ void BaseRealSenseNode::frame_callback(rs2::frame frame)
             }
 
             nomagicStoreFramesetForLazyProcessing(frameset);
-            bool apply_filters_now = nomagicFramesetHasSubscribers(frameset) || !nomagic_lazy_frame_filtering;
+            bool apply_filters_now = nomagicFramesetHasSubscribers(frameset) || !nomagic_lazy_filtering;
             if (apply_filters_now) {
                 ROS_DEBUG("num_filters: %d", static_cast<int>(_filters.size()));
                 for (std::vector<NamedFilter>::const_iterator filter_it = _filters.begin(); filter_it != _filters.end(); filter_it++)
@@ -2510,7 +2512,7 @@ void BaseRealSenseNode::nomagicSetupService(stream_index_pair stream, bool is_al
                             ? nomagic_get_latest_aligned_frame_servers
                             : nomagic_get_latest_frame_servers;
 
-        // Trampoline to pass stream parameter to the callback.
+    // Trampoline to pass stream parameter to the callback.
     boost::function<bool(GetLatestFrame::Request&, GetLatestFrame::Response&)> callback =
             [=](GetLatestFrame::Request& request, GetLatestFrame::Response& response) {
         return nomagicGetLatestFrameCallback(stream, is_aligned_depth, request, response);
@@ -2523,12 +2525,11 @@ void BaseRealSenseNode::nomagicSetupService(stream_index_pair stream, bool is_al
 
 void BaseRealSenseNode::nomagicSetup()
 {
-    // NOTE: The size of the frame queue is set to 8, because that's
-    // the minimal number of frames to make the temporal filter work reasonably
+    // The minimal number of frames to make the temporal filter work reasonably == 9
     // where reasonable == having persistence settings working as expected
     // and reasonable != equivalent to filtering (and thus accumulating) every frame.
     // Details: librealsense/src/proc/temporal-filter.cpp
-    nomagic_frameset_queue.resize(8);
+    nomagic_frameset_queue.resize(nomagic_lazy_filtering ? nomagic_lazy_filtering_frame_history_size : 1);
 
     for (auto& stream : IMAGE_STREAMS) {
         if (!_enable[stream]) {
@@ -2570,21 +2571,34 @@ bool BaseRealSenseNode::nomagicGetLatestFrameCallback(stream_index_pair stream, 
                                                       GetLatestFrame::Request& request,
                                                       GetLatestFrame::Response& response)
 {
+    // If nomagic_lazy_filtering, queue will have == 1 frameset
+    // Otherwise, there will be >= 1 frameset
     auto queue = nomagicGetNonEmptyFramesetQueue();
 
+    // Parameter stream means usually the type of the returned frame (color/depth/infra1/infra2)
+    // However, when is_aligned_depth, we will return depth aligned to {stream}
+
+    // If we're not requested for aligned depth,
     // RGB and Infra frames don't need any processing:
-    if (stream != DEPTH && !is_aligned_depth) {
+    if (!is_aligned_depth && stream != DEPTH) {
         rs2::frameset frameset = nomagic_frameset_queue.back();
         response.image = *nomagicFrameToMessage(stream, nomagicFramesetToFrame(stream, frameset));
         return true;
     }
 
-    // Now we're handling either depth or aligned depth:
+    // If we don't do lazy filtering, there's no need to rebuild temporal filter state,
+    // because it's been updated in frame_callback eagerly.
+    if (nomagic_lazy_filtering) {
+        nomagicResetTemporalFilter();
+    }
 
-    nomagicResetTemporalFilter();
+    // If nomagic_lazy_filtering, we apply filters for all the frames we have kept.
+    // Otherwise, the queue will be of size == 1 and filtering will be done only for the most recent frame
+    // (It will repeat the computations done in the frame_callback, but this makes the implementation simpler)
     rs2::frameset frameset = nomagicApplyFilters(std::move(queue));
 
 
+    // Transform the frameset into a frame, aligning the depth if needed.
     rs2::frame final_frame = is_aligned_depth
                            ? nomagicAlignFrameToDepth(stream, frameset)
                            : nomagicFramesetToFrame(stream, frameset);
@@ -2602,21 +2616,18 @@ rs2::frameset BaseRealSenseNode::nomagicApplyFilters(boost::circular_buffer<rs2:
         frameset = queue.front(); queue.pop_front();
 
         // Decide if we apply spatial filter for this frame:
-        bool apply_spatial = nomagic_skip_spatial_filter_for_inner_frames
-                           ? (frames_processed == 0 || frames_processed == queue.capacity() - 1)
-                           : false;
+        bool is_inner_frame = (frames_processed == 0 || frames_processed == queue.capacity() - 1);
+        bool skip_spatial = nomagic_skip_spatial_filter_for_inner_frames && is_inner_frame;
+
         for (const NamedFilter& named_filter : _filters) {
-            // It may look like we're overwriting the frame here
-            // but the 'real' purpose is to accumulate sufficient history in the temporal filter
-            if (!apply_spatial && named_filter._name == "spatial") {
+            if (skip_spatial && named_filter._name == "spatial") {
                 continue;
             }
-            printf("Applying filter %s\n", named_filter._name.c_str());
+            // Accumulate history in the temporal filter
             frameset = named_filter._filter->process(frameset);
         }
         frames_processed += 1;
     }
-    printf("Processed %d frames\n", frames_processed);
     return frameset;
 
 }
@@ -2700,9 +2711,16 @@ void BaseRealSenseNode::nomagicResetTemporalFilter()
 
 void BaseRealSenseNode::nomagicStoreFramesetForLazyProcessing(rs2::frameset frameset)
 {
-    std::lock_guard<std::mutex> lock(nomagic_frameset_queue_mutex);
-
+    // Very rarely realsense will deliver an incomplete frameset, which is very hard to handle correctly.
+    // The difficulty comes from the fact that depth alignment must work with full framesets,
+    // which cannot be constructed from single frames (a complete frameset it must be delivered by librealsense).
+    // In order to keep the implementation as simple as it can be, we drop such framesets.
+    // This may slightly increase latency rarely, especially if !nomagic_lazy_filtering.
+    if (!nomagicIsFramesetComplete(frameset)) {
+        return;
+    }
     frameset.keep();
+    std::lock_guard<std::mutex> lock(nomagic_frameset_queue_mutex);
     nomagic_frameset_queue.push_back(frameset);
 }
 
@@ -2731,3 +2749,32 @@ rs2::frame BaseRealSenseNode::nomagicFramesetToFrame(stream_index_pair stream, r
     // This probably indicates a logic error in processing in the caller code.
     throw std::runtime_error("[NOMAGIC] Stream frame not found in the frameset");
 }
+
+#define NOMAGIC_GET_PARAM(name)                                               \
+    if (!_pnh.param(#name, name, name)) {                                     \
+        ROS_WARN_STREAM("[NOMAGIC] Failed to retrieve parameter: " << #name); \
+    }                                                                         \
+    ROS_INFO_STREAM("[NOMAGIC] Parameter: " << #name << ": " << name)
+void BaseRealSenseNode::nomagicGetParameters()
+{
+    NOMAGIC_GET_PARAM(nomagic_lazy_filtering_frame_history_size);
+    NOMAGIC_GET_PARAM(nomagic_skip_spatial_filter_for_inner_frames);
+    NOMAGIC_GET_PARAM(nomagic_lazy_filtering);
+}
+
+bool BaseRealSenseNode::nomagicIsFramesetComplete(const rs2::frameset& frameset)
+{
+    std::set<stream_index_pair> required = {DEPTH, COLOR, INFRA1, INFRA2};
+    for (auto frame : frameset) {
+        auto stream_type = frame.get_profile().stream_type();
+        auto stream_index = frame.get_profile().stream_index();
+        required.erase(std::make_pair(stream_type, stream_index));
+    }
+    if (!required.empty()) {
+        // This is rather harmless, increases latency and hard to fix.
+        ROS_WARN_STREAM("[NOMAGIC] Received an incomplete frameset");
+    }
+    return required.empty();
+}
+
+#undef NOMAGIC_GET_PARAM

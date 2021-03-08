@@ -331,8 +331,9 @@ namespace realsense2_camera
 
         // NOMAGIC
 
+        int  nomagic_lazy_filtering_frame_history_size = 9;
         bool nomagic_skip_spatial_filter_for_inner_frames = true;
-        bool nomagic_lazy_frame_filtering = true;
+        bool nomagic_lazy_filtering = true;
 
         std::map<stream_index_pair, ros::ServiceServer> nomagic_get_latest_frame_servers;
         std::map<stream_index_pair, ros::ServiceServer> nomagic_get_latest_aligned_frame_servers;
@@ -343,7 +344,9 @@ namespace realsense2_camera
             boost::circular_buffer<rs2::frameset> nomagic_frameset_queue;
 
         void nomagicSetup();
+        void nomagicGetParameters();
         void nomagicResetTemporalFilter();
+        bool nomagicIsFramesetComplete(const rs2::frameset& frameset);
         bool nomagicFramesetHasSubscribers(const rs2::frameset& frameset);
         void nomagicStoreFramesetForLazyProcessing(rs2::frameset);
         bool nomagicGetLatestFrameCallback(stream_index_pair stream, bool is_aligned_depth, GetLatestFrame::Request& request, GetLatestFrame::Response& response);

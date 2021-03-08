@@ -62,6 +62,10 @@
   <arg name="publish_odom_tf"           default="true"/>
   <arg name="allow_no_texture_points"   default="false"/>
 
+  <arg name="nomagic_lazy_filtering_frame_history_size"    default="9"/>
+  <arg name="nomagic_skip_spatial_filter_for_inner_frames" default="true"/>
+  <arg name="nomagic_lazy_filtering"                       default="true"/>
+
   <group ns="$(arg camera)">
     <include file="$(find realsense2_camera)/launch/includes/nodelet.launch.xml">
       <arg name="tf_prefix"                value="$(arg tf_prefix)"/>
@@ -124,6 +128,11 @@
       <arg name="calib_odom_file"          value="$(arg calib_odom_file)"/>
       <arg name="publish_odom_tf"          value="$(arg publish_odom_tf)"/>
       <arg name="allow_no_texture_points"  value="$(arg allow_no_texture_points)"/>
+
+      <arg name="nomagic_lazy_filtering_frame_history_size"    value="$(arg nomagic_lazy_filtering_frame_history_size)"/>
+      <arg name="nomagic_skip_spatial_filter_for_inner_frames" value="$(arg nomagic_skip_spatial_filter_for_inner_frames)"/>
+      <arg name="nomagic_lazy_filtering"                       value="$(arg nomagic_lazy_filtering)"/>
+
     </include>
   </group>
 </launch>
