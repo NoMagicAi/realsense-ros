@@ -248,18 +248,6 @@ namespace realsense2_camera
         void publish_temperature();
         void publish_frequency_update();
 
-        void nomagicSetup();
-        bool nomagicGetLatestFrameCallback(stream_index_pair stream, bool is_aligned_depth, GetLatestFrame::Request& request, GetLatestFrame::Response& response);
-        bool nomagicFramesetHasSubscribers(const rs2::frameset& frameset);
-        sensor_msgs::ImagePtr nomagicFrameToMessage(stream_index_pair stream, rs2::frame frame);
-        void nomagicResetTemporalFilter();
-        rs2::frameset nomagicApplyFilters(boost::circular_buffer<rs2::frameset>&& queue);
-        void nomagicStoreFramesetForLazyProcessing(rs2::frameset);
-        void nomagicSetupService(stream_index_pair stream, bool is_aligned_depth);
-        rs2::frame nomagicAlignFrameToDepth(stream_index_pair stream, rs2::frameset frameset);
-        boost::circular_buffer<rs2::frameset> nomagicGetNonEmptyFramesetQueue();
-        rs2::frame nomagicFramesetToFrame(stream_index_pair stream, rs2::frameset frameset);
-
         rs2::device _dev;
         std::map<stream_index_pair, rs2::sensor> _sensors;
         std::map<std::string, std::function<void(rs2::frame)>> _sensors_callback;
@@ -341,13 +329,31 @@ namespace realsense2_camera
         sensor_msgs::PointCloud2 _msg_pointcloud;
         std::vector< unsigned int > _valid_pc_indices;
 
+        // NOMAGIC
+
         bool nomagic_skip_spatial_filter_for_inner_frames = true;
         bool nomagic_lazy_frame_filtering = true;
+
         std::map<stream_index_pair, ros::ServiceServer> nomagic_get_latest_frame_servers;
         std::map<stream_index_pair, ros::ServiceServer> nomagic_get_latest_aligned_frame_servers;
 
+        // The nomagic_frameset_queue is written from the librealsense callback thread (frame_callback)
+        // and read (copied) from ROS service thread (nomagicGetLatestFrameCallback)
         std::mutex nomagic_frameset_queue_mutex;
             boost::circular_buffer<rs2::frameset> nomagic_frameset_queue;
+
+        void nomagicSetup();
+        void nomagicResetTemporalFilter();
+        bool nomagicFramesetHasSubscribers(const rs2::frameset& frameset);
+        void nomagicStoreFramesetForLazyProcessing(rs2::frameset);
+        bool nomagicGetLatestFrameCallback(stream_index_pair stream, bool is_aligned_depth, GetLatestFrame::Request& request, GetLatestFrame::Response& response);
+        void nomagicSetupService(stream_index_pair stream, bool is_aligned_depth);
+        rs2::frame nomagicAlignFrameToDepth(stream_index_pair stream, rs2::frameset frameset);
+        rs2::frame nomagicFramesetToFrame(stream_index_pair stream, rs2::frameset frameset);
+        rs2::frameset nomagicApplyFilters(boost::circular_buffer<rs2::frameset>&& queue);
+        sensor_msgs::ImagePtr nomagicFrameToMessage(stream_index_pair stream, rs2::frame frame);
+        boost::circular_buffer<rs2::frameset> nomagicGetNonEmptyFramesetQueue();
+
     };//end class
 
 }
