@@ -2781,6 +2781,7 @@ bool BaseRealSenseNode::nomagicIsFramesetComplete(const rs2::frameset& frameset)
             missing << rs2_stream_to_string(stream.first) << stream.second << ", ";
         }
         // This is rather harmless, increases latency and hard to fix.
+        // However, if you receive a lot of these notification, try to replug the camera :)
         ROS_WARN_STREAM("[NOMAGIC] Received an incomplete frameset, missing: " << missing.str());
     }
     return required.empty();
