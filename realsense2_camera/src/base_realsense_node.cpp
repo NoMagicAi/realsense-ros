@@ -2764,15 +2764,24 @@ void BaseRealSenseNode::nomagicGetParameters()
 
 bool BaseRealSenseNode::nomagicIsFramesetComplete(const rs2::frameset& frameset)
 {
-    std::set<stream_index_pair> required = {DEPTH, COLOR, INFRA1, INFRA2};
+    std::set<stream_index_pair> required;
+    for (auto&& stream_enabled : _enable) {
+        if (stream_enabled.second) {
+            required.insert(stream_enabled.first);
+        }
+    }
     for (auto frame : frameset) {
         auto stream_type = frame.get_profile().stream_type();
         auto stream_index = frame.get_profile().stream_index();
         required.erase(std::make_pair(stream_type, stream_index));
     }
     if (!required.empty()) {
+        std::stringstream missing;
+        for (auto&& stream : required) {
+            missing << rs2_stream_to_string(stream.first) << stream.second << ", ";
+        }
         // This is rather harmless, increases latency and hard to fix.
-        ROS_WARN_STREAM("[NOMAGIC] Received an incomplete frameset");
+        ROS_WARN_STREAM("[NOMAGIC] Received an incomplete frameset, missing: " << missing.str());
     }
     return required.empty();
 }
