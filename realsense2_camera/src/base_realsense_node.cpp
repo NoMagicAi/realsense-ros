@@ -2536,6 +2536,7 @@ void BaseRealSenseNode::nomagicSetup()
             continue;
         }
 
+        nomagic_expected_streams.insert(stream);
         nomagicSetupService(stream, false);
 
         bool advertise_aligned_depth = (_align_depth && (stream != DEPTH) && (stream != CONFIDENCE) && stream.second < 2);
@@ -2543,7 +2544,6 @@ void BaseRealSenseNode::nomagicSetup()
             nomagicSetupService(stream, true);
         }
     }
-
 }
 
 bool BaseRealSenseNode::nomagicFramesetHasSubscribers(const rs2::frameset& frameset)
@@ -2571,9 +2571,19 @@ bool BaseRealSenseNode::nomagicGetLatestFrameCallback(stream_index_pair stream, 
                                                       GetLatestFrame::Request& request,
                                                       GetLatestFrame::Response& response)
 {
+    ROS_DEBUG("[NOMAGIC] get_latest_frame: stream=%s_%d aligned_depth=%d",
+              rs2_stream_to_string(stream.first), stream.second, is_aligned_depth);
+
     // If nomagic_lazy_filtering, queue will have == 1 frameset
     // Otherwise, there will be >= 1 frameset
     auto queue = nomagicGetNonEmptyFramesetQueue();
+
+    auto first = queue.front().get_timestamp();
+    auto last = queue.back().get_timestamp();
+    auto first_domain_str = rs2_timestamp_domain_to_string(queue.front().get_frame_timestamp_domain());
+    auto last_domain_str = rs2_timestamp_domain_to_string(queue.back().get_frame_timestamp_domain());
+    ROS_DEBUG("[NOMAGIC] Queue contains %lu frames, from (%.4f, %s) to (%.4f, %s)",
+              queue.size(), first, first_domain_str, last, last_domain_str);
 
     // Parameter stream means usually the type of the returned frame (color/depth/infra1/infra2)
     // However, when is_aligned_depth, we will return depth aligned to {stream}
@@ -2600,7 +2610,7 @@ bool BaseRealSenseNode::nomagicGetLatestFrameCallback(stream_index_pair stream, 
 
     // Transform the frameset into a frame, aligning the depth if needed.
     rs2::frame final_frame = is_aligned_depth
-                           ? nomagicAlignFrameToDepth(stream, frameset)
+                           ? nomagicGetDepthAlignedTo(stream, frameset)
                            : nomagicFramesetToFrame(stream, frameset);
 
 
@@ -2627,19 +2637,23 @@ rs2::frameset BaseRealSenseNode::nomagicApplyFilters(boost::circular_buffer<rs2:
             frameset = named_filter._filter->process(frameset);
         }
         frames_processed += 1;
+        ROS_DEBUG("[NOMAGIC] Filtered %d most recent frames", frames_processed);
     }
+    ROS_DEBUG("[NOMAGIC] Frameset after filtering: %s", nomagicFramesetDescriptionString(frameset).c_str());
     return frameset;
 
 }
 
-rs2::frame BaseRealSenseNode::nomagicAlignFrameToDepth(stream_index_pair stream, rs2::frameset frameset)
+rs2::frame BaseRealSenseNode::nomagicGetDepthAlignedTo(stream_index_pair stream, rs2::frameset frameset)
 {
     // This code is a modified and refactored chunk of publishAlignedDepthToOthers
+    ROS_DEBUG("[NOMAGIC] Computing depth aligned to %s%d from frameset %s",
+              rs2_stream_to_string(stream.first), stream.second, nomagicFramesetDescriptionString(frameset).c_str());
 
     // Skip depth (makes no sense to align depth to depth)
     // Skip 'sibling' streams like infra2, because ros-realsense does so for an unknown reason.
     if (RS2_STREAM_DEPTH == stream.first || stream.second > 1) {
-        ROS_WARN_STREAM("[NOMAGIC] Attempted an unexpected align to depth operation. Check source code for details");
+        ROS_WARN("[NOMAGIC] Attempted an unexpected align to depth operation. Check source code for details");
         return nomagicFramesetToFrame(stream, frameset);
     }
 
@@ -2659,6 +2673,7 @@ rs2::frame BaseRealSenseNode::nomagicAlignFrameToDepth(stream_index_pair stream,
     // Apply colorizer filter if present
     for (const auto & _filter : _filters) {
         if (_filter._name == "colorizer") {
+            ROS_DEBUG("[NOMAGIC] Applying colorizer filter");
             return _filter._filter->process(aligned_depth);
         }
     }
@@ -2694,11 +2709,15 @@ sensor_msgs::ImagePtr BaseRealSenseNode::nomagicFrameToMessage(stream_index_pair
     img->header.frame_id = _optical_frame_id.at(stream); // Not sure about this, but probably it does not matter for us.
     img->header.stamp = ros::Time::now(); // This is a simplification, does not handle the case when _sync_frames == false
 
+    ROS_DEBUG("[NOMAGIC] Generated frame: (w=%u, h=%u, enc=%s, ptr=%p)",
+          img->width, img->height, img->encoding.c_str(), img->data.data());
+
     return img;
 }
 
 void BaseRealSenseNode::nomagicResetTemporalFilter()
 {
+    ROS_DEBUG("[NOMAGIC] Resetting temporal filter state");
     // Temporal filter resets after changing any of its parameters (even to the same value).
     for (const NamedFilter& named_filter : _filters) {
         if (named_filter._name == "temporal") {
@@ -2716,9 +2735,27 @@ void BaseRealSenseNode::nomagicStoreFramesetForLazyProcessing(rs2::frameset fram
     // which cannot be constructed from single frames (a complete frameset it must be delivered by librealsense).
     // In order to keep the implementation as simple as it can be, we drop such framesets.
     // This may slightly increase latency rarely, especially if !nomagic_lazy_filtering.
-    if (!nomagicIsFramesetComplete(frameset)) {
+
+    // Check if all required frames are present in the frameset
+    auto required = nomagic_expected_streams;
+    for (auto frame : frameset) {
+        auto stream_type = frame.get_profile().stream_type();
+        auto stream_index = frame.get_profile().stream_index();
+        required.erase(std::make_pair(stream_type, stream_index));
+    }
+
+    if (!required.empty()) {
+        std::stringstream missing;
+        for (auto&& stream : required) {
+            missing << rs2_stream_to_string(stream.first) << stream.second << ", ";
+        }
+        // This is rather harmless, increases latency and hard to fix.
+        // However, if you receive a lot of these notification, try to replug the camera :)
+        ROS_WARN("[NOMAGIC] Received an incomplete frameset, missing: %s", missing.str().c_str());
         return;
     }
+    ROS_DEBUG("[NOMAGIC] Received a complete frameset");
+
     frameset.keep();
     std::lock_guard<std::mutex> lock(nomagic_frameset_queue_mutex);
     nomagic_frameset_queue.push_back(frameset);
@@ -2739,6 +2776,8 @@ boost::circular_buffer<rs2::frameset> BaseRealSenseNode::nomagicGetNonEmptyFrame
 
 rs2::frame BaseRealSenseNode::nomagicFramesetToFrame(stream_index_pair stream, rs2::frameset frameset)
 {
+    ROS_DEBUG("[NOMAGIC] Getting %s_%d from the frameset %s",
+              rs2_stream_to_string(stream.first), stream.second, nomagicFramesetDescriptionString(frameset).c_str());
     for (auto frame : frameset) {
         auto stream_type = frame.get_profile().stream_type();
         auto stream_index = frame.get_profile().stream_index();
@@ -2746,7 +2785,9 @@ rs2::frame BaseRealSenseNode::nomagicFramesetToFrame(stream_index_pair stream, r
             return frame;
         }
     }
-    // This probably indicates a logic error in processing in the caller code.
+    // This sad situation means most likely that we hadn't have the requested stream in the queue
+    // This may be caused by the librealsense not delivering some streams (e.g. due to USB frame drops)
+    // However, it may also indicate a logic error in the calling code (e.g. requesting depth from a rgb frame).
     throw std::runtime_error("[NOMAGIC] Stream frame not found in the frameset");
 }
 
@@ -2762,29 +2803,17 @@ void BaseRealSenseNode::nomagicGetParameters()
     NOMAGIC_GET_PARAM(nomagic_lazy_filtering);
 }
 
-bool BaseRealSenseNode::nomagicIsFramesetComplete(const rs2::frameset& frameset)
+std::string BaseRealSenseNode::nomagicFramesetDescriptionString(const rs2::frameset& frameset)
 {
-    std::set<stream_index_pair> required;
-    for (auto&& stream_enabled : _enable) {
-        if (stream_enabled.second) {
-            required.insert(stream_enabled.first);
-        }
-    }
-    for (auto frame : frameset) {
+    std::stringstream str;
+    str << "(";
+    for (auto&& frame : frameset) {
         auto stream_type = frame.get_profile().stream_type();
         auto stream_index = frame.get_profile().stream_index();
-        required.erase(std::make_pair(stream_type, stream_index));
+        str << rs2_stream_to_string(stream_type) << "_" << stream_index << ", ";
     }
-    if (!required.empty()) {
-        std::stringstream missing;
-        for (auto&& stream : required) {
-            missing << rs2_stream_to_string(stream.first) << stream.second << ", ";
-        }
-        // This is rather harmless, increases latency and hard to fix.
-        // However, if you receive a lot of these notification, try to replug the camera :)
-        ROS_WARN_STREAM("[NOMAGIC] Received an incomplete frameset, missing: " << missing.str());
-    }
-    return required.empty();
+    str << ")";
+    return str.str();
 }
 
 #undef NOMAGIC_GET_PARAM
