@@ -2572,7 +2572,7 @@ bool BaseRealSenseNode::nomagicGetLatestFrameCallback(stream_index_pair stream, 
                                                       GetLatestFrame::Response& response)
 {
     ROS_INFO("[NOMAGIC] get_latest_frame: stream=%s_%d aligned_depth=%d",
-              rs2_stream_to_string(stream.first), stream.second, is_aligned_depth);
+             rs2_stream_to_string(stream.first), stream.second, is_aligned_depth);
 
     // If nomagic_lazy_filtering, queue will have == 1 frameset
     // Otherwise, there will be >= 1 frameset
@@ -2587,7 +2587,8 @@ bool BaseRealSenseNode::nomagicGetLatestFrameCallback(stream_index_pair stream, 
     // Here we're assuming that the timestamps are in the same domain.
     // If that's no the case, it will be visible in the logs printed above
     double actual_timespan = (queue.back().get_timestamp() - queue.front().get_timestamp()) / 1000.0;
-    double expected_timespan = static_cast<double>(queue.size() - 1) / (is_aligned_depth ? _fps[DEPTH] : _fps[stream]);
+    double expected_timespan =
+            static_cast<double>(queue.size() - 1) / (is_aligned_depth ? _fps[DEPTH] : _fps[stream]);
     ROS_INFO("[NOMAGIC] Buffer time span: %fs (expected: %fs)", actual_timespan, expected_timespan);
 
     // Parameter stream means usually the type of the returned frame (color/depth/infra1/infra2)
@@ -2615,9 +2616,8 @@ bool BaseRealSenseNode::nomagicGetLatestFrameCallback(stream_index_pair stream, 
 
     // Transform the frameset into a frame, aligning the depth if needed.
     rs2::frame final_frame = is_aligned_depth
-                           ? nomagicGetDepthAlignedTo(stream, frameset)
-                           : nomagicFramesetToFrame(stream, frameset);
-
+                             ? nomagicGetDepthAlignedTo(stream, frameset)
+                             : nomagicFramesetToFrame(stream, frameset);
 
     response.image = *nomagicFrameToMessage(is_aligned_depth ? DEPTH : stream, final_frame);
     return true;
@@ -2635,11 +2635,14 @@ rs2::frameset BaseRealSenseNode::nomagicApplyFilters(boost::circular_buffer<rs2:
         bool skip_spatial = nomagic_skip_spatial_filter_for_inner_frames && is_inner_frame;
 
         for (const NamedFilter& named_filter : _filters) {
+            if (named_filter._name != "spatial" && named_filter._name != "temporal") {
+                continue; // Skip unknown filters (like pointcloud)
+            }
             if (skip_spatial && named_filter._name == "spatial") {
                 continue;
             }
             // Accumulate history in the temporal filter
-            frameset = named_filter._filter->process(frameset);
+            frameset.apply_filter(*named_filter._filter);
         }
         frames_processed += 1;
     }
@@ -2722,7 +2725,7 @@ sensor_msgs::ImagePtr BaseRealSenseNode::nomagicFrameToMessage(stream_index_pair
 
 void BaseRealSenseNode::nomagicResetTemporalFilter()
 {
-    ROS_INFO("[NOMAGIC] Resetting temporal filter state");
+    ROS_INFO("[NOMAGIC] Resetting temporal filter's state");
     // Temporal filter resets after changing any of its parameters (even to the same value).
     for (const NamedFilter& named_filter : _filters) {
         if (named_filter._name == "temporal") {
@@ -2759,7 +2762,6 @@ void BaseRealSenseNode::nomagicStoreFramesetForLazyProcessing(rs2::frameset fram
         ROS_WARN("[NOMAGIC] Received an incomplete frameset, missing: %s", missing.str().c_str());
         return;
     }
-    ROS_DEBUG("[NOMAGIC] Received a complete frameset");
 
     frameset.keep();
     std::lock_guard<std::mutex> lock(nomagic_frameset_queue_mutex);
@@ -2783,6 +2785,7 @@ rs2::frame BaseRealSenseNode::nomagicFramesetToFrame(stream_index_pair stream, r
 {
     ROS_INFO("[NOMAGIC] Getting %s_%d from the frameset %s",
               rs2_stream_to_string(stream.first), stream.second, nomagicFramesetDescriptionString(frameset).c_str());
+
     for (auto frame : frameset) {
         auto stream_type = frame.get_profile().stream_type();
         auto stream_index = frame.get_profile().stream_index();
@@ -2815,7 +2818,8 @@ std::string BaseRealSenseNode::nomagicFramesetDescriptionString(const rs2::frame
     for (auto&& frame : frameset) {
         auto stream_type = frame.get_profile().stream_type();
         auto stream_index = frame.get_profile().stream_index();
-        str << rs2_stream_to_string(stream_type) << "_" << stream_index << ", ";
+        str << rs2_stream_to_string(stream_type) << "_" << stream_index
+        << " ok=" << static_cast<bool>(frame) << "" << ", ";
     }
 
     auto timestamp_secs = frameset.get_timestamp() / 1000.0;

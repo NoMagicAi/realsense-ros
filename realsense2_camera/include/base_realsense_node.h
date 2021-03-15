@@ -46,7 +46,7 @@ namespace realsense2_camera
 
       void update()
       {
-        diagnostic_updater_.update();
+        diagnostic_updater_.force_update();
       }
 
       double expected_frequency_;
@@ -64,7 +64,7 @@ namespace realsense2_camera
             void update(double crnt_temperaure)
             {
                 _crnt_temp = crnt_temperaure;
-                _updater.update();
+                _updater.force_update();
             }
 
         private:
