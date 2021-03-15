@@ -2578,12 +2578,17 @@ bool BaseRealSenseNode::nomagicGetLatestFrameCallback(stream_index_pair stream, 
     // Otherwise, there will be >= 1 frameset
     auto queue = nomagicGetNonEmptyFramesetQueue();
 
-    auto first = queue.front().get_timestamp();
-    auto last = queue.back().get_timestamp();
-    auto first_domain_str = rs2_timestamp_domain_to_string(queue.front().get_frame_timestamp_domain());
-    auto last_domain_str = rs2_timestamp_domain_to_string(queue.back().get_frame_timestamp_domain());
-    ROS_INFO("[NOMAGIC] Queue contains %lu frames, from (%.4f, %s) to (%.4f, %s)",
-              queue.size(), first, first_domain_str, last, last_domain_str);
+    ROS_INFO("[NOMAGIC] Queue contains %lu frames:", queue.size());
+
+    for (auto&& frameset : queue) {
+        ROS_INFO("[NOMAGIC] %s", nomagicFramesetDescriptionString(frameset).c_str());
+    }
+
+    // Here we're assuming that the timestamps are in the same domain.
+    // If that's no the case, it will be visible in the logs printed above
+    double actual_timespan = (queue.back().get_timestamp() - queue.front().get_timestamp()) / 1000.0;
+    double expected_timespan = static_cast<double>(queue.size() - 1) / (is_aligned_depth ? _fps[DEPTH] : _fps[stream]);
+    ROS_INFO("[NOMAGIC] Buffer time span: %fs (expected: %fs)", actual_timespan, expected_timespan);
 
     // Parameter stream means usually the type of the returned frame (color/depth/infra1/infra2)
     // However, when is_aligned_depth, we will return depth aligned to {stream}
@@ -2637,8 +2642,8 @@ rs2::frameset BaseRealSenseNode::nomagicApplyFilters(boost::circular_buffer<rs2:
             frameset = named_filter._filter->process(frameset);
         }
         frames_processed += 1;
-        ROS_INFO("[NOMAGIC] Filtered %d most recent frames", frames_processed);
     }
+    ROS_INFO("[NOMAGIC] Filtered %d most recent frames", frames_processed);
     ROS_INFO("[NOMAGIC] Frameset after filtering: %s", nomagicFramesetDescriptionString(frameset).c_str());
     return frameset;
 
@@ -2754,7 +2759,7 @@ void BaseRealSenseNode::nomagicStoreFramesetForLazyProcessing(rs2::frameset fram
         ROS_WARN("[NOMAGIC] Received an incomplete frameset, missing: %s", missing.str().c_str());
         return;
     }
-    ROS_INFO("[NOMAGIC] Received a complete frameset");
+    ROS_DEBUG("[NOMAGIC] Received a complete frameset");
 
     frameset.keep();
     std::lock_guard<std::mutex> lock(nomagic_frameset_queue_mutex);
@@ -2812,6 +2817,11 @@ std::string BaseRealSenseNode::nomagicFramesetDescriptionString(const rs2::frame
         auto stream_index = frame.get_profile().stream_index();
         str << rs2_stream_to_string(stream_type) << "_" << stream_index << ", ";
     }
+
+    auto timestamp_secs = frameset.get_timestamp() / 1000.0;
+    auto timestamp_domain = rs2_timestamp_domain_to_string(frameset.get_frame_timestamp_domain());
+    str << std::setprecision(20) << timestamp_secs << " " << timestamp_domain;
+
     str << ")";
     return str.str();
 }
