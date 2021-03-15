@@ -2571,7 +2571,7 @@ bool BaseRealSenseNode::nomagicGetLatestFrameCallback(stream_index_pair stream, 
                                                       GetLatestFrame::Request& request,
                                                       GetLatestFrame::Response& response)
 {
-    ROS_DEBUG("[NOMAGIC] get_latest_frame: stream=%s_%d aligned_depth=%d",
+    ROS_INFO("[NOMAGIC] get_latest_frame: stream=%s_%d aligned_depth=%d",
               rs2_stream_to_string(stream.first), stream.second, is_aligned_depth);
 
     // If nomagic_lazy_filtering, queue will have == 1 frameset
@@ -2582,7 +2582,7 @@ bool BaseRealSenseNode::nomagicGetLatestFrameCallback(stream_index_pair stream, 
     auto last = queue.back().get_timestamp();
     auto first_domain_str = rs2_timestamp_domain_to_string(queue.front().get_frame_timestamp_domain());
     auto last_domain_str = rs2_timestamp_domain_to_string(queue.back().get_frame_timestamp_domain());
-    ROS_DEBUG("[NOMAGIC] Queue contains %lu frames, from (%.4f, %s) to (%.4f, %s)",
+    ROS_INFO("[NOMAGIC] Queue contains %lu frames, from (%.4f, %s) to (%.4f, %s)",
               queue.size(), first, first_domain_str, last, last_domain_str);
 
     // Parameter stream means usually the type of the returned frame (color/depth/infra1/infra2)
@@ -2637,9 +2637,9 @@ rs2::frameset BaseRealSenseNode::nomagicApplyFilters(boost::circular_buffer<rs2:
             frameset = named_filter._filter->process(frameset);
         }
         frames_processed += 1;
-        ROS_DEBUG("[NOMAGIC] Filtered %d most recent frames", frames_processed);
+        ROS_INFO("[NOMAGIC] Filtered %d most recent frames", frames_processed);
     }
-    ROS_DEBUG("[NOMAGIC] Frameset after filtering: %s", nomagicFramesetDescriptionString(frameset).c_str());
+    ROS_INFO("[NOMAGIC] Frameset after filtering: %s", nomagicFramesetDescriptionString(frameset).c_str());
     return frameset;
 
 }
@@ -2647,7 +2647,7 @@ rs2::frameset BaseRealSenseNode::nomagicApplyFilters(boost::circular_buffer<rs2:
 rs2::frame BaseRealSenseNode::nomagicGetDepthAlignedTo(stream_index_pair stream, rs2::frameset frameset)
 {
     // This code is a modified and refactored chunk of publishAlignedDepthToOthers
-    ROS_DEBUG("[NOMAGIC] Computing depth aligned to %s%d from frameset %s",
+    ROS_INFO("[NOMAGIC] Computing depth aligned to %s%d from frameset %s",
               rs2_stream_to_string(stream.first), stream.second, nomagicFramesetDescriptionString(frameset).c_str());
 
     // Skip depth (makes no sense to align depth to depth)
@@ -2663,7 +2663,7 @@ rs2::frame BaseRealSenseNode::nomagicGetDepthAlignedTo(stream_index_pair stream,
         align = _align.at(stream.first);
     }
     catch(const std::out_of_range& e) {
-        ROS_DEBUG_STREAM("[NOMAGIC] Allocated align filter for:" << rs2_stream_to_string(stream.first) << stream.second);
+        ROS_DEBUG("[NOMAGIC] Allocated align filter for: %s_%d", rs2_stream_to_string(stream.first), stream.second);
         align = (_align[stream.first] = std::make_shared<rs2::align>(stream.first));
     }
 
@@ -2673,7 +2673,7 @@ rs2::frame BaseRealSenseNode::nomagicGetDepthAlignedTo(stream_index_pair stream,
     // Apply colorizer filter if present
     for (const auto & _filter : _filters) {
         if (_filter._name == "colorizer") {
-            ROS_DEBUG("[NOMAGIC] Applying colorizer filter");
+            ROS_INFO("[NOMAGIC] Applying colorizer filter");
             return _filter._filter->process(aligned_depth);
         }
     }
@@ -2709,7 +2709,7 @@ sensor_msgs::ImagePtr BaseRealSenseNode::nomagicFrameToMessage(stream_index_pair
     img->header.frame_id = _optical_frame_id.at(stream); // Not sure about this, but probably it does not matter for us.
     img->header.stamp = ros::Time::now(); // This is a simplification, does not handle the case when _sync_frames == false
 
-    ROS_DEBUG("[NOMAGIC] Generated frame: (w=%u, h=%u, enc=%s, ptr=%p)",
+    ROS_INFO("[NOMAGIC] Generated frame: (w=%u, h=%u, enc=%s, ptr=%p)",
           img->width, img->height, img->encoding.c_str(), img->data.data());
 
     return img;
@@ -2717,7 +2717,7 @@ sensor_msgs::ImagePtr BaseRealSenseNode::nomagicFrameToMessage(stream_index_pair
 
 void BaseRealSenseNode::nomagicResetTemporalFilter()
 {
-    ROS_DEBUG("[NOMAGIC] Resetting temporal filter state");
+    ROS_INFO("[NOMAGIC] Resetting temporal filter state");
     // Temporal filter resets after changing any of its parameters (even to the same value).
     for (const NamedFilter& named_filter : _filters) {
         if (named_filter._name == "temporal") {
@@ -2754,7 +2754,7 @@ void BaseRealSenseNode::nomagicStoreFramesetForLazyProcessing(rs2::frameset fram
         ROS_WARN("[NOMAGIC] Received an incomplete frameset, missing: %s", missing.str().c_str());
         return;
     }
-    ROS_DEBUG("[NOMAGIC] Received a complete frameset");
+    ROS_INFO("[NOMAGIC] Received a complete frameset");
 
     frameset.keep();
     std::lock_guard<std::mutex> lock(nomagic_frameset_queue_mutex);
@@ -2776,7 +2776,7 @@ boost::circular_buffer<rs2::frameset> BaseRealSenseNode::nomagicGetNonEmptyFrame
 
 rs2::frame BaseRealSenseNode::nomagicFramesetToFrame(stream_index_pair stream, rs2::frameset frameset)
 {
-    ROS_DEBUG("[NOMAGIC] Getting %s_%d from the frameset %s",
+    ROS_INFO("[NOMAGIC] Getting %s_%d from the frameset %s",
               rs2_stream_to_string(stream.first), stream.second, nomagicFramesetDescriptionString(frameset).c_str());
     for (auto frame : frameset) {
         auto stream_type = frame.get_profile().stream_type();
@@ -2793,7 +2793,7 @@ rs2::frame BaseRealSenseNode::nomagicFramesetToFrame(stream_index_pair stream, r
 
 #define NOMAGIC_GET_PARAM(name)                                               \
     if (!_pnh.param(#name, name, name)) {                                     \
-        ROS_WARN_STREAM("[NOMAGIC] Failed to retrieve parameter: " << #name); \
+        ROS_WARN("[NOMAGIC] Failed to retrieve parameter: %s", #name); \
     }                                                                         \
     ROS_INFO_STREAM("[NOMAGIC] Parameter: " << #name << ": " << name)
 void BaseRealSenseNode::nomagicGetParameters()
