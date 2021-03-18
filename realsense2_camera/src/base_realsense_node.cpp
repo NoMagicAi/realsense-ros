@@ -2442,6 +2442,8 @@ void BaseRealSenseNode::publish_temperature()
                 ROS_DEBUG_STREAM("Failed checking for temperature." << std::endl << e.what());
             }
         }
+        // Do not burst messages into /diagnostics to avoid losing them
+        std::this_thread::sleep_for(std::chrono::milliseconds(42));
     }
 }
 
@@ -2450,10 +2452,14 @@ void BaseRealSenseNode::publish_frequency_update()
     for (auto &image_publisher : _image_publishers)
     {
         image_publisher.second.second->update();
+        // Do not burst messages into /diagnostics to avoid losing them
+        std::this_thread::sleep_for(std::chrono::milliseconds(42));
     }
     for (auto& image_publisher : _depth_aligned_image_publishers)
     {
         image_publisher.second.second->update();
+        // Do not burst messages into /diagnostics to avoid losing them
+        std::this_thread::sleep_for(std::chrono::milliseconds(42));
     }
 }
 
