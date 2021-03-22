@@ -2416,17 +2416,19 @@ void BaseRealSenseNode::startMonitoring()
         _temperature_nodes.push_back({option, std::make_shared<TemperatureDiagnostics>(rs2_option_to_string(option), _serial_no )});
     }
 
-    int time_interval(1000);
+    int time_interval(1000); // WARNING: nomagicPublishStats assumes it's called every second.
     std::function<void()> func = [this, time_interval](){
         std::mutex mu;
         std::unique_lock<std::mutex> lock(mu);
         while(_is_running) {
-            _cv.wait_for(lock, std::chrono::milliseconds(time_interval), [&]{return !_is_running;});
+            auto next_wakeup = std::chrono::steady_clock::now() + std::chrono::milliseconds(time_interval);
             if (_is_running)
             {
                 publish_temperature();
                 publish_frequency_update();
+                nomagic_frameset_fragmentation_diagnostics.force_update();
             }
+            _cv.wait_until(lock, next_wakeup, [&]{return !_is_running;});
         }
     };
     _monitoring_t = std::make_shared<std::thread>(func);
@@ -2544,6 +2546,11 @@ void BaseRealSenseNode::nomagicSetup()
             nomagicSetupService(stream, true);
         }
     }
+
+    nomagic_frameset_fragmentation_diagnostics.add("[NOMAGIC] Framesets Fragmentation Status",
+                                                   this, &BaseRealSenseNode::nomagicFramesetsDiagnosticsCallback);
+    nomagic_frameset_fragmentation_diagnostics.setHardwareID(_serial_no);
+
 }
 
 bool BaseRealSenseNode::nomagicFramesetHasSubscribers(const rs2::frameset& frameset)
@@ -2736,6 +2743,17 @@ void BaseRealSenseNode::nomagicResetTemporalFilter()
     }
 }
 
+std::set<stream_index_pair> BaseRealSenseNode::nomagicFindMissingStreamsInFrameset(const rs2::frameset& frameset)
+{
+    auto required = nomagic_expected_streams;
+    for (auto frame : frameset) {
+        auto stream_type = frame.get_profile().stream_type();
+        auto stream_index = frame.get_profile().stream_index();
+        required.erase(std::make_pair(stream_type, stream_index));
+    }
+    return required;
+}
+
 void BaseRealSenseNode::nomagicStoreFramesetForLazyProcessing(rs2::frameset frameset)
 {
     // Very rarely realsense will deliver an incomplete frameset, which is very hard to handle correctly.
@@ -2744,28 +2762,24 @@ void BaseRealSenseNode::nomagicStoreFramesetForLazyProcessing(rs2::frameset fram
     // In order to keep the implementation as simple as it can be, we drop such framesets.
     // This may slightly increase latency rarely, especially if !nomagic_lazy_filtering.
 
-    // Check if all required frames are present in the frameset
-    auto required = nomagic_expected_streams;
-    for (auto frame : frameset) {
-        auto stream_type = frame.get_profile().stream_type();
-        auto stream_index = frame.get_profile().stream_index();
-        required.erase(std::make_pair(stream_type, stream_index));
-    }
-
-    if (!required.empty()) {
-        std::stringstream missing;
-        for (auto&& stream : required) {
-            missing << rs2_stream_to_string(stream.first) << stream.second << ", ";
+    auto missing = nomagicFindMissingStreamsInFrameset(frameset);
+    if (!missing.empty()) {
+        std::stringstream missingStr;
+        for (auto&& stream : missing) {
+            missingStr << rs2_stream_to_string(stream.first) << stream.second << ", ";
         }
         // This is rather harmless, increases latency and hard to fix.
         // However, if you receive a lot of these notification, try to replug the camera :)
-        ROS_WARN("[NOMAGIC] Received an incomplete frameset, missing: %s", missing.str().c_str());
-        return;
+        ROS_WARN("[NOMAGIC] Received an incomplete frameset, missing: %s", missingStr.str().c_str());
     }
 
-    frameset.keep();
     std::lock_guard<std::mutex> lock(nomagic_frameset_queue_mutex);
-    nomagic_frameset_queue.push_back(frameset);
+    if (missing.empty()) {
+        frameset.keep();
+        nomagic_frameset_queue.push_back(frameset);
+    }
+    nomagic_all_framesets_count_last_period += 1;
+    nomagic_incomplete_framesets_count_last_period += static_cast<int>(!missing.empty());
 }
 
 boost::circular_buffer<rs2::frameset> BaseRealSenseNode::nomagicGetNonEmptyFramesetQueue()
@@ -2828,6 +2842,22 @@ std::string BaseRealSenseNode::nomagicFramesetDescriptionString(const rs2::frame
 
     str << ")";
     return str.str();
+}
+
+void BaseRealSenseNode::nomagicFramesetsDiagnosticsCallback(diagnostic_updater::DiagnosticStatusWrapper& status)
+{
+    static Clock period_clock;
+    status.summary(0, "Number of all and incomplete framesets received");
+    // Publish NOMAGIC stats on total/incomplete framesets
+    {
+        std::lock_guard<std::mutex> lock(nomagic_frameset_queue_mutex);
+        status.add("period", period_clock.getElapsedSecs());
+        status.add("all_framesets", nomagic_all_framesets_count_last_period);
+        status.add("incomplete_framesets", nomagic_incomplete_framesets_count_last_period);
+        nomagic_all_framesets_count_last_period = 0;
+        nomagic_incomplete_framesets_count_last_period = 0;
+    }
+    period_clock.restart();
 }
 
 #undef NOMAGIC_GET_PARAM

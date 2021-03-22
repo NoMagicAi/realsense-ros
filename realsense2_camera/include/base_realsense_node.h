@@ -337,15 +337,19 @@ namespace realsense2_camera
 
         std::map<stream_index_pair, ros::ServiceServer> nomagic_get_latest_frame_servers;
         std::map<stream_index_pair, ros::ServiceServer> nomagic_get_latest_aligned_frame_servers;
-
         std::set<stream_index_pair> nomagic_expected_streams;
 
         // The nomagic_frameset_queue is written from the librealsense callback thread (frame_callback)
         // and read (copied) from ROS service thread (nomagicGetLatestFrameCallback)
         std::mutex nomagic_frameset_queue_mutex;
             boost::circular_buffer<rs2::frameset> nomagic_frameset_queue;
+            int32_t nomagic_all_framesets_count_last_period;
+            int32_t nomagic_incomplete_framesets_count_last_period;
+
+        diagnostic_updater::Updater nomagic_frameset_fragmentation_diagnostics;
 
         void nomagicSetup();
+        void nomagicPublishStats();
         void nomagicGetParameters();
         void nomagicResetTemporalFilter();
         bool nomagicFramesetHasSubscribers(const rs2::frameset& frameset);
@@ -358,6 +362,8 @@ namespace realsense2_camera
         rs2::frameset nomagicApplyFilters(boost::circular_buffer<rs2::frameset>&& queue);
         sensor_msgs::ImagePtr nomagicFrameToMessage(stream_index_pair stream, rs2::frame frame);
         boost::circular_buffer<rs2::frameset> nomagicGetNonEmptyFramesetQueue();
+        std::set<stream_index_pair> nomagicFindMissingStreamsInFrameset(const rs2::frameset& frameset);
+        void nomagicFramesetsDiagnosticsCallback(diagnostic_updater::DiagnosticStatusWrapper& status);
 
     };//end class
 
