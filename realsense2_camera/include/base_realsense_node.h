@@ -343,8 +343,10 @@ namespace realsense2_camera
         // and read (copied) from ROS service thread (nomagicGetLatestFrameCallback)
         std::mutex nomagic_frameset_queue_mutex;
             boost::circular_buffer<rs2::frameset> nomagic_frameset_queue;
-            int32_t nomagic_all_framesets_count_last_period;
-            int32_t nomagic_incomplete_framesets_count_last_period;
+            int32_t nomagic_framesets_last_period;
+            int32_t nomagic_incomplete_framesets_last_period;
+            int32_t nomagic_missing_depth_framesets_last_period;
+            int32_t nomagic_missing_color_framesets_last_period;
 
         diagnostic_updater::Updater nomagic_frameset_fragmentation_diagnostics;
 

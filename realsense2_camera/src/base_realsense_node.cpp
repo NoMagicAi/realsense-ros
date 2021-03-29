@@ -2773,13 +2773,17 @@ void BaseRealSenseNode::nomagicStoreFramesetForLazyProcessing(rs2::frameset fram
         ROS_WARN("[NOMAGIC] Received an incomplete frameset, missing: %s", missingStr.str().c_str());
     }
 
-    std::lock_guard<std::mutex> lock(nomagic_frameset_queue_mutex);
-    if (missing.empty()) {
-        frameset.keep();
-        nomagic_frameset_queue.push_back(frameset);
+    {
+        std::lock_guard<std::mutex> lock(nomagic_frameset_queue_mutex);
+        if (missing.empty()) {
+            frameset.keep();
+            nomagic_frameset_queue.push_back(frameset);
+        }
+        nomagic_framesets_last_period += 1;
+        nomagic_incomplete_framesets_last_period += static_cast<int>(!missing.empty());
+        nomagic_missing_color_framesets_last_period += static_cast<int>(missing.find(COLOR) != missing.end());
+        nomagic_missing_depth_framesets_last_period += static_cast<int>(missing.find(DEPTH) != missing.end());
     }
-    nomagic_all_framesets_count_last_period += 1;
-    nomagic_incomplete_framesets_count_last_period += static_cast<int>(!missing.empty());
 }
 
 boost::circular_buffer<rs2::frameset> BaseRealSenseNode::nomagicGetNonEmptyFramesetQueue()
@@ -2847,17 +2851,26 @@ std::string BaseRealSenseNode::nomagicFramesetDescriptionString(const rs2::frame
 void BaseRealSenseNode::nomagicFramesetsDiagnosticsCallback(diagnostic_updater::DiagnosticStatusWrapper& status)
 {
     static Clock period_clock;
-    status.summary(0, "Number of all and incomplete framesets received");
+    status.summary(0, "Statistics of framesets received from the camera");
     // Publish NOMAGIC stats on total/incomplete framesets
     {
         std::lock_guard<std::mutex> lock(nomagic_frameset_queue_mutex);
         status.add("period", period_clock.getElapsedSecs());
-        status.add("all_framesets", nomagic_all_framesets_count_last_period);
-        status.add("incomplete_framesets", nomagic_incomplete_framesets_count_last_period);
-        nomagic_all_framesets_count_last_period = 0;
-        nomagic_incomplete_framesets_count_last_period = 0;
+
+        status.add("framesets", nomagic_framesets_last_period);
+        nomagic_framesets_last_period = 0;
+
+        status.add("incomplete_framesets", nomagic_incomplete_framesets_last_period);
+        nomagic_incomplete_framesets_last_period = 0;
+
+        status.add("missing_color_framesets", nomagic_missing_color_framesets_last_period);
+        nomagic_missing_color_framesets_last_period = 0;
+
+        status.add("missing_depth_framesets", nomagic_missing_depth_framesets_last_period);
+        nomagic_missing_depth_framesets_last_period = 0;
+
+        period_clock.restart();
     }
-    period_clock.restart();
 }
 
 #undef NOMAGIC_GET_PARAM
