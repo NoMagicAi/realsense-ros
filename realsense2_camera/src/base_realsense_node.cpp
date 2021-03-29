@@ -2638,7 +2638,7 @@ rs2::frameset BaseRealSenseNode::nomagicApplyFilters(boost::circular_buffer<rs2:
         frameset = queue.front(); queue.pop_front();
 
         // Decide if we apply spatial filter for this frame:
-        bool is_inner_frame = (frames_processed == 0 || frames_processed == static_cast<int>(queue.capacity()) - 1);
+        bool is_inner_frame = !(frames_processed == 0 || frames_processed == static_cast<int>(queue.capacity()) - 1);
         bool skip_spatial = nomagic_skip_spatial_filter_for_inner_frames && is_inner_frame;
 
         for (const NamedFilter& named_filter : _filters) {
@@ -2650,6 +2650,7 @@ rs2::frameset BaseRealSenseNode::nomagicApplyFilters(boost::circular_buffer<rs2:
             }
             // Accumulate history in the temporal filter
             frameset.apply_filter(*named_filter._filter);
+            ROS_INFO("[NOMAGIC] Applied filter %s", named_filter._name.c_str());
         }
         frames_processed += 1;
     }
