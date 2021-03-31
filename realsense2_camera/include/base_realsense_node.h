@@ -350,8 +350,10 @@ namespace realsense2_camera
 
         diagnostic_updater::Updater nomagic_frameset_fragmentation_diagnostics;
 
+        rs2::processing_block nomagic_muxer;
+        std::map<stream_index_pair, rs2::frameset> nomagic_latest_frame_buffer;
+
         void nomagicSetup();
-        void nomagicPublishStats();
         void nomagicGetParameters();
         void nomagicResetTemporalFilter();
         bool nomagicFramesetHasSubscribers(const rs2::frameset& frameset);
@@ -366,6 +368,7 @@ namespace realsense2_camera
         boost::circular_buffer<rs2::frameset> nomagicGetNonEmptyFramesetQueue();
         std::set<stream_index_pair> nomagicFindMissingStreamsInFrameset(const rs2::frameset& frameset);
         void nomagicFramesetsDiagnosticsCallback(diagnostic_updater::DiagnosticStatusWrapper& status);
+        void nomagicMuxerCallback(rs2::frame frame, rs2::frame_source& src);
 
     };//end class
 

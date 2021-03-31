@@ -81,11 +81,12 @@ BaseRealSenseNode::BaseRealSenseNode(ros::NodeHandle& nodeHandle,
                                      ros::NodeHandle& privateNodeHandle,
                                      rs2::device dev,
                                      const std::string& serial_no) :
-    _is_running(true), _base_frame_id(""),  _node_handle(nodeHandle),
-    _pnh(privateNodeHandle), _dev(dev), _json_file_path(""),
-    _serial_no(serial_no),
-    _is_initialized_time_base(false),
-    _namespace(getNamespaceStr())
+        _is_running(true), _base_frame_id(""), _node_handle(nodeHandle),
+        _pnh(privateNodeHandle), _dev(dev), _json_file_path(""),
+        _serial_no(serial_no),
+        _is_initialized_time_base(false),
+        _namespace(getNamespaceStr()),
+        nomagic_muxer([&](rs2::frame f, rs2::frame_source& src) { nomagicMuxerCallback(f, src);})
 {
     // Types for depth stream
     _format[RS2_STREAM_DEPTH] = RS2_FORMAT_Z16;
@@ -1585,7 +1586,8 @@ void BaseRealSenseNode::frame_callback(rs2::frame frame)
                 clip_depth(depth_frame, _clipping_distance);
             }
 
-            nomagicStoreFramesetForLazyProcessing(frameset);
+//            nomagicStoreFramesetForLazyProcessing(frameset);
+            nomagic_muxer.invoke(frame);
             bool apply_filters_now = nomagicFramesetHasSubscribers(frameset) || !nomagic_lazy_filtering;
             if (apply_filters_now) {
                 ROS_DEBUG("num_filters: %d", static_cast<int>(_filters.size()));
@@ -2416,7 +2418,7 @@ void BaseRealSenseNode::startMonitoring()
         _temperature_nodes.push_back({option, std::make_shared<TemperatureDiagnostics>(rs2_option_to_string(option), _serial_no )});
     }
 
-    int time_interval(1000); // WARNING: nomagicPublishStats assumes it's called every second.
+    int time_interval(1000);
     std::function<void()> func = [this, time_interval](){
         std::mutex mu;
         std::unique_lock<std::mutex> lock(mu);
@@ -2551,6 +2553,41 @@ void BaseRealSenseNode::nomagicSetup()
                                                    this, &BaseRealSenseNode::nomagicFramesetsDiagnosticsCallback);
     nomagic_frameset_fragmentation_diagnostics.setHardwareID(_serial_no);
 
+    nomagic_muxer.start([&](rs2::frame frame) {
+        nomagicStoreFramesetForLazyProcessing(frame.as<rs2::frameset>());
+    });
+}
+
+void BaseRealSenseNode::nomagicMuxerCallback(rs2::frame frame, rs2::frame_source& src)
+{
+    auto frameset = frame.as<rs2::frameset>();
+    frameset.keep();
+
+    // Update nomagic_latest_frame_buffer with arrived frames (possibly from an incomplete frameset)
+    for (auto&& f : frameset) {
+        auto stream_index = std::make_pair(f.get_profile().stream_type(), f.get_profile().stream_index());
+        nomagic_latest_frame_buffer[stream_index] = frameset;
+    }
+
+    // Build a synthetic frameset based on the latest frames from the buffer.
+    std::vector<rs2::frame> frames_vec;
+    for (auto&& stream_index : nomagic_expected_streams) {
+        if (nomagic_latest_frame_buffer.find(stream_index) == nomagic_latest_frame_buffer.end()) {
+            continue;  // Given stream did not yet arrive.
+        }
+        for (auto&& f : nomagic_latest_frame_buffer.at(stream_index)) {
+            auto f_stream_index = std::make_pair(f.get_profile().stream_type(), f.get_profile().stream_index());
+            if (stream_index == f_stream_index) {
+                ROS_INFO("For %s_%d using frame aged %f", rs2_stream_to_string(stream_index.first), stream_index.second,
+                         frameset.get_timestamp() - f.get_timestamp());
+                frames_vec.push_back(f);
+                break;
+            }
+        }
+    }
+
+    // Note: the resulting frameset may be still incomplete (usually just after startup); it will be dropped later.
+    src.frame_ready(src.allocate_composite_frame(frames_vec));
 }
 
 bool BaseRealSenseNode::nomagicFramesetHasSubscribers(const rs2::frameset& frameset)
