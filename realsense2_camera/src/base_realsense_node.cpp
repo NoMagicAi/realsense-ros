@@ -2561,7 +2561,17 @@ void BaseRealSenseNode::nomagicSetup()
 void BaseRealSenseNode::nomagicMuxerCallback(rs2::frame frame, rs2::frame_source& src)
 {
     auto frameset = frame.as<rs2::frameset>();
+    auto missing_streams = nomagicFindMissingStreamsInFrameset(frameset);
     frameset.keep();
+
+    // Update stats
+    {
+        std::lock_guard<std::mutex> lock(nomagic_diagnostics_mutex);
+        nomagic_received_framesets_last_period += 1;
+        nomagic_incomplete_framesets_last_period += missing_streams.empty() ? 0 : 1;
+        nomagic_missing_depth_framesets_last_period += missing_streams.find(DEPTH) != missing_streams.end() ? 1 : 0;
+        nomagic_missing_color_framesets_last_period += missing_streams.find(COLOR) != missing_streams.end() ? 1 : 0;
+    }
 
     // Update nomagic_latest_frame_buffer with arrived frames (possibly from an incomplete frameset)
     for (auto&& f : frameset) {
@@ -2569,7 +2579,12 @@ void BaseRealSenseNode::nomagicMuxerCallback(rs2::frame frame, rs2::frame_source
         nomagic_latest_frame_buffer[stream_index] = frameset;
     }
 
-    // Build a synthetic frameset based on the latest frames from the buffer.
+    // No new depth frame means we're done here.
+    if (missing_streams.find(DEPTH) != missing_streams.end()) {
+        return;
+    }
+
+    // On every depth-positive frameset build a synthetic frameset based on the latest frames from the buffer.
     std::vector<rs2::frame> frames_vec;
     for (auto&& stream_index : nomagic_expected_streams) {
         if (nomagic_latest_frame_buffer.find(stream_index) == nomagic_latest_frame_buffer.end()) {
@@ -2578,15 +2593,27 @@ void BaseRealSenseNode::nomagicMuxerCallback(rs2::frame frame, rs2::frame_source
         for (auto&& f : nomagic_latest_frame_buffer.at(stream_index)) {
             auto f_stream_index = std::make_pair(f.get_profile().stream_type(), f.get_profile().stream_index());
             if (stream_index == f_stream_index) {
-                ROS_INFO("For %s_%d using frame aged %f", rs2_stream_to_string(stream_index.first), stream_index.second,
-                         frameset.get_timestamp() - f.get_timestamp());
                 frames_vec.push_back(f);
                 break;
             }
         }
     }
 
-    // Note: the resulting frameset may be still incomplete (usually just after startup); it will be dropped later.
+    if (frames_vec.size() != nomagic_expected_streams.size()) {
+        // This is expected on startup, however if it continues after a few seconds,
+        // it may indicate a problem on the earlier stage of processing.
+        ROS_WARN("[NOMAGIC] Dropping muxed frame: observed size: %lu, expected size: %lu",
+                 frames_vec.size(),
+                 nomagic_expected_streams.size());
+        return;
+    }
+
+    // At this point we know that we have a frameset with a fresh depth frame
+    // and (possibly historical) other streams, so we can tick aligned depth frequency counters.
+    for (auto&& image_publisher : _depth_aligned_image_publishers) {
+        image_publisher.second.second->update();
+    }
+
     src.frame_ready(src.allocate_composite_frame(frames_vec));
 }
 
@@ -2794,21 +2821,16 @@ std::set<stream_index_pair> BaseRealSenseNode::nomagicFindMissingStreamsInFrames
 
 void BaseRealSenseNode::nomagicStoreFramesetForLazyProcessing(rs2::frameset frameset)
 {
-    // Very rarely realsense will deliver an incomplete frameset, which is very hard to handle correctly.
-    // The difficulty comes from the fact that depth alignment must work with full framesets,
-    // which cannot be constructed from single frames (a complete frameset it must be delivered by librealsense).
-    // In order to keep the implementation as simple as it can be, we drop such framesets.
-    // This may slightly increase latency rarely, especially if !nomagic_lazy_filtering.
-
     auto missing = nomagicFindMissingStreamsInFrameset(frameset);
     if (!missing.empty()) {
         std::stringstream missingStr;
         for (auto&& stream : missing) {
             missingStr << rs2_stream_to_string(stream.first) << stream.second << ", ";
         }
-        // This is rather harmless, increases latency and hard to fix.
-        // However, if you receive a lot of these notification, try to replug the camera :)
+        // It is natural to see these on startup before receiving a complete frameset.
+        // If seen later, it indicates a bug in the earlier processing stage, most likely in nomagicMuxerCallback(...)
         ROS_WARN("[NOMAGIC] Received an incomplete frameset, missing: %s", missingStr.str().c_str());
+        return;
     }
 
     {
@@ -2817,10 +2839,7 @@ void BaseRealSenseNode::nomagicStoreFramesetForLazyProcessing(rs2::frameset fram
             frameset.keep();
             nomagic_frameset_queue.push_back(frameset);
         }
-        nomagic_framesets_last_period += 1;
-        nomagic_incomplete_framesets_last_period += static_cast<int>(!missing.empty());
-        nomagic_missing_color_framesets_last_period += static_cast<int>(missing.find(COLOR) != missing.end());
-        nomagic_missing_depth_framesets_last_period += static_cast<int>(missing.find(DEPTH) != missing.end());
+
     }
 }
 
@@ -2895,8 +2914,8 @@ void BaseRealSenseNode::nomagicFramesetsDiagnosticsCallback(diagnostic_updater::
         std::lock_guard<std::mutex> lock(nomagic_frameset_queue_mutex);
         status.add("period", period_clock.getElapsedSecs());
 
-        status.add("framesets", nomagic_framesets_last_period);
-        nomagic_framesets_last_period = 0;
+        status.add("received_framesets", nomagic_received_framesets_last_period);
+        nomagic_received_framesets_last_period = 0;
 
         status.add("incomplete_framesets", nomagic_incomplete_framesets_last_period);
         nomagic_incomplete_framesets_last_period = 0;
