@@ -2611,7 +2611,11 @@ void BaseRealSenseNode::nomagicMuxerCallback(rs2::frame frame, rs2::frame_source
     // At this point we know that we have a frameset with a fresh depth frame
     // and (possibly historical) other streams, so we can tick aligned depth frequency counters.
     for (auto&& image_publisher : _depth_aligned_image_publishers) {
-        image_publisher.second.second->update();
+        if (missing_streams.find(image_publisher.first) != missing_streams.end()) {
+            // If we find this stream in missing
+            image_publisher.second.second->tick();
+
+        }
     }
 
     src.frame_ready(src.allocate_composite_frame(frames_vec));
