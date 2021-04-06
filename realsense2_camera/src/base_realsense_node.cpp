@@ -2680,42 +2680,38 @@ bool BaseRealSenseNode::nomagicGetLatestFrameCallback(stream_index_pair stream, 
     // Parameter stream means usually the type of the returned frame (color/depth/infra1/infra2)
     // However, when is_aligned_depth, we will return depth aligned to {stream}
 
+    rs2::frame final_frame;
     // If we're not requested for aligned depth,
     // RGB and Infra frames don't need any processing:
     if (!is_aligned_depth && stream != DEPTH) {
         rs2::frameset frameset = nomagic_frameset_queue.back();
-        rs2::frame frame = nomagicFramesetToFrame(stream, frameset);
-        response.image = *nomagicFrameToMessage(stream, frame);
-        response.frame_timestamp = frame.get_timestamp() / 1000.0;
-        response.response_timestamp = nomagicGetUnixTimestamp();
-        return true;
-    }
-
-    // If we don't do lazy filtering, there's no need to rebuild temporal filter state,
-    // because it's been updated in frame_callback eagerly.
-    if (nomagic_lazy_filtering) {
-        clock.restart();
-        nomagicResetTemporalFilter();
-        response.reset_temporal_filter_duration = clock.getElapsedSecs();
-    }
-
-    // If nomagic_lazy_filtering, we apply filters for all the frames we have kept.
-    // Otherwise, the queue will be of size == 1 and filtering will be done only for the most recent frame
-    // (It will repeat the computations done in the frame_callback, but this makes the implementation simpler)
-    clock.restart();
-    rs2::frameset frameset = nomagicApplyFilters(std::move(queue));
-    response.filtering_duration = clock.getElapsedSecs();
-
-    // Transform the frameset into a frame, aligning the depth if needed.
-    rs2::frame final_frame;
-
-    if (is_aligned_depth) {
-        clock.restart();
-        final_frame = nomagicGetDepthAlignedTo(stream, frameset);
-        response.depth_alignment_duration =  clock.getElapsedSecs();
+        final_frame = nomagicFramesetToFrame(stream, frameset);
     }
     else {
-        final_frame = nomagicFramesetToFrame(stream, frameset);
+        // If nomagic_lazy_filtering, we need to clean the temporal filter state
+        // as it may contain old data from the previous request.
+        if (nomagic_lazy_filtering) {
+            clock.restart();
+            nomagicResetTemporalFilter();
+            response.reset_temporal_filter_duration = clock.getElapsedSecs();
+        }
+
+        // If nomagic_lazy_filtering, we apply filters for all the frames we have kept.
+        // Otherwise, the queue will be of size == 1 and filtering will be done only for the most recent frame
+        // (It will repeat the computations done in the frame_callback, but this makes the implementation simpler)
+        clock.restart();
+        rs2::frameset frameset = nomagicApplyFilters(std::move(queue));
+        response.filtering_duration = clock.getElapsedSecs();
+
+        // Transform the frameset into a frame, aligning the depth if needed.
+        if (is_aligned_depth) {
+            clock.restart();
+            final_frame = nomagicGetDepthAlignedTo(stream, frameset);
+            response.depth_alignment_duration = clock.getElapsedSecs();
+        }
+        else {
+            final_frame = nomagicFramesetToFrame(stream, frameset);
+        }
     }
 
     response.image = *nomagicFrameToMessage(is_aligned_depth ? DEPTH : stream, final_frame);
