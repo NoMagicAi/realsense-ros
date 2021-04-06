@@ -2549,10 +2549,12 @@ void BaseRealSenseNode::nomagicSetup()
         }
     }
 
+    // Setup diagnostics
     nomagic_frameset_fragmentation_diagnostics.add("[NOMAGIC] Framesets Fragmentation Status",
                                                    this, &BaseRealSenseNode::nomagicFramesetsDiagnosticsCallback);
     nomagic_frameset_fragmentation_diagnostics.setHardwareID(_serial_no);
 
+    // Setup muxer
     nomagic_muxer.start([&](rs2::frame frame) {
         nomagicStoreFramesetForLazyProcessing(frame.as<rs2::frameset>());
     });
@@ -2609,12 +2611,12 @@ void BaseRealSenseNode::nomagicMuxerCallback(rs2::frame frame, rs2::frame_source
     }
 
     // At this point we know that we have a frameset with a fresh depth frame
-    // and (possibly historical) other streams, so we can tick aligned depth frequency counters.
+    // and (possibly historical) other streams.
     for (auto&& image_publisher : _depth_aligned_image_publishers) {
         if (missing_streams.find(image_publisher.first) != missing_streams.end()) {
-            // If we find this stream in missing
+            // If we find (color/infra) stream in missing, we know that we did not tick
+            // aligned_depth fps counter in frame_callback path, so we need to do it here.
             image_publisher.second.second->tick();
-
         }
     }
 

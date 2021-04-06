@@ -13,6 +13,10 @@ When upgrading the base version (from Intel), keep NoMagic's version unchanged.
 
 ### Changelog:
 
+#### 0.2.0
+
+- Feature: implemented get_latest_frame service using lazy filtering.
+
 #### 0.1.1
 
 - Bugfix: Add delay between publishing `/diagnostics` messages to avoid loosing them in the publisher's queue.
