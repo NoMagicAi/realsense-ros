@@ -2566,6 +2566,12 @@ void BaseRealSenseNode::nomagicMuxerCallback(rs2::frame frame, rs2::frame_source
     auto missing_streams = nomagicFindMissingStreamsInFrameset(frameset);
     frameset.keep();
 
+
+
+    if (frameset.get_frame_timestamp_domain() != RS2_TIMESTAMP_DOMAIN_GLOBAL_TIME) {
+        ROS_WARN("[NOMAGIC] Frameset timestamp has invalid domain, published timestamps and durations may be skewed");
+    }
+
     // Update stats
     {
         std::lock_guard<std::mutex> lock(nomagic_diagnostics_mutex);
@@ -2648,13 +2654,16 @@ bool BaseRealSenseNode::nomagicGetLatestFrameCallback(stream_index_pair stream, 
                                                       GetLatestFrame::Request& request,
                                                       GetLatestFrame::Response& response)
 {
+    response.request_timestamp = nomagicGetUnixTimestamp();
     ROS_INFO("[NOMAGIC] get_latest_frame: stream=%s_%d aligned_depth=%d",
              rs2_stream_to_string(stream.first), stream.second, is_aligned_depth);
+    Clock clock;
 
     // If nomagic_lazy_filtering, queue will have == 1 frameset
     // Otherwise, there will be >= 1 frameset
+    clock.restart();
     auto queue = nomagicGetNonEmptyFramesetQueue();
-
+    response.wait_for_frames_duration = clock.getElapsedSecs();
     ROS_INFO("[NOMAGIC] Queue contains %lu frames:", queue.size());
 
     for (auto&& frameset : queue) {
@@ -2675,28 +2684,43 @@ bool BaseRealSenseNode::nomagicGetLatestFrameCallback(stream_index_pair stream, 
     // RGB and Infra frames don't need any processing:
     if (!is_aligned_depth && stream != DEPTH) {
         rs2::frameset frameset = nomagic_frameset_queue.back();
-        response.image = *nomagicFrameToMessage(stream, nomagicFramesetToFrame(stream, frameset));
+        rs2::frame frame = nomagicFramesetToFrame(stream, frameset);
+        response.image = *nomagicFrameToMessage(stream, frame);
+        response.frame_timestamp = frame.get_timestamp() / 1000.0;
+        response.response_timestamp = nomagicGetUnixTimestamp();
         return true;
     }
 
     // If we don't do lazy filtering, there's no need to rebuild temporal filter state,
     // because it's been updated in frame_callback eagerly.
     if (nomagic_lazy_filtering) {
+        clock.restart();
         nomagicResetTemporalFilter();
+        response.reset_temporal_filter_duration = clock.getElapsedSecs();
     }
 
     // If nomagic_lazy_filtering, we apply filters for all the frames we have kept.
     // Otherwise, the queue will be of size == 1 and filtering will be done only for the most recent frame
     // (It will repeat the computations done in the frame_callback, but this makes the implementation simpler)
+    clock.restart();
     rs2::frameset frameset = nomagicApplyFilters(std::move(queue));
-
+    response.filtering_duration = clock.getElapsedSecs();
 
     // Transform the frameset into a frame, aligning the depth if needed.
-    rs2::frame final_frame = is_aligned_depth
-                             ? nomagicGetDepthAlignedTo(stream, frameset)
-                             : nomagicFramesetToFrame(stream, frameset);
+    rs2::frame final_frame;
+
+    if (is_aligned_depth) {
+        clock.restart();
+        final_frame = nomagicGetDepthAlignedTo(stream, frameset);
+        response.depth_alignment_duration =  clock.getElapsedSecs();
+    }
+    else {
+        final_frame = nomagicFramesetToFrame(stream, frameset);
+    }
 
     response.image = *nomagicFrameToMessage(is_aligned_depth ? DEPTH : stream, final_frame);
+    response.frame_timestamp = final_frame.get_timestamp() / 1000.0;
+    response.response_timestamp = nomagicGetUnixTimestamp();
     return true;
 }
 
@@ -2934,6 +2958,12 @@ void BaseRealSenseNode::nomagicFramesetsDiagnosticsCallback(diagnostic_updater::
 
         period_clock.restart();
     }
+}
+
+double BaseRealSenseNode::nomagicGetUnixTimestamp()
+{
+    std::chrono::duration<double> timestamp = std::chrono::high_resolution_clock::now().time_since_epoch();
+    return timestamp.count();
 }
 
 #undef NOMAGIC_GET_PARAM

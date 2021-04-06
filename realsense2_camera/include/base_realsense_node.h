@@ -371,7 +371,7 @@ namespace realsense2_camera
         std::set<stream_index_pair> nomagicFindMissingStreamsInFrameset(const rs2::frameset& frameset);
         void nomagicFramesetsDiagnosticsCallback(diagnostic_updater::DiagnosticStatusWrapper& status);
         void nomagicMuxerCallback(rs2::frame frame, rs2::frame_source& src);
-
+        double nomagicGetUnixTimestamp();
     };//end class
 
 }
