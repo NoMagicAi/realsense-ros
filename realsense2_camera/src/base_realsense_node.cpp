@@ -2871,6 +2871,7 @@ void BaseRealSenseNode::nomagicStoreFramesetForLazyProcessing(rs2::frameset fram
 
 boost::circular_buffer<rs2::frameset> BaseRealSenseNode::nomagicGetNonEmptyFramesetQueue()
 {
+    int times_waited = 0;
     while (true) {
         {
             std::lock_guard<std::mutex> lock(nomagic_frameset_queue_mutex);
@@ -2879,6 +2880,11 @@ boost::circular_buffer<rs2::frameset> BaseRealSenseNode::nomagicGetNonEmptyFrame
             }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        times_waited += 1;
+        if (times_waited > 1) {
+            // This message may indicate too high CPU load (or some mysterious concurrency bug ;))
+            ROS_WARN("[NOMAGIC] Waited for locking frameset queue %d times", times_waited);
+        }
     }
 }
 
