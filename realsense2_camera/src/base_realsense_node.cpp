@@ -81,12 +81,12 @@ BaseRealSenseNode::BaseRealSenseNode(ros::NodeHandle& nodeHandle,
                                      ros::NodeHandle& privateNodeHandle,
                                      rs2::device dev,
                                      const std::string& serial_no) :
-        _is_running(true), _base_frame_id(""), _node_handle(nodeHandle),
-        _pnh(privateNodeHandle), _dev(dev), _json_file_path(""),
-        _serial_no(serial_no),
-        _is_initialized_time_base(false),
-        _namespace(getNamespaceStr()),
-        nomagic_muxer([&](rs2::frame f, rs2::frame_source& src) { nomagicMuxerCallback(f, src);})
+    _is_running(true), _base_frame_id(""),  _node_handle(nodeHandle),
+    _pnh(privateNodeHandle), _dev(dev), _json_file_path(""),
+    _serial_no(serial_no),
+    _is_initialized_time_base(false),
+    _namespace(getNamespaceStr()),
+    nomagic_muxer([&](rs2::frame f, rs2::frame_source& src) { nomagicMuxerCallback(f, src);})
 {
     // Types for depth stream
     _format[RS2_STREAM_DEPTH] = RS2_FORMAT_Z16;
