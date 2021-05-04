@@ -199,7 +199,7 @@ namespace realsense2_camera
         void setupErrorCallback();
         void setupPublishers();
         void enable_devices();
-        void setupFilters();
+        void setupFilters(std::vector<NamedFilter>&);
         void setupStreams();
         void setBaseTime(double frame_time, bool warn_no_metadata);
         cv::Mat& fix_depth_scale(const cv::Mat& from_image, cv::Mat& to_image);
@@ -338,6 +338,7 @@ namespace realsense2_camera
         std::map<stream_index_pair, ros::ServiceServer> nomagic_get_latest_frame_servers;
         std::map<stream_index_pair, ros::ServiceServer> nomagic_get_latest_aligned_frame_servers;
         std::set<stream_index_pair> nomagic_expected_streams;
+        std::vector<NamedFilter> nomagic_filters;
 
         // The nomagic_frameset_queue is written from the librealsense callback thread (frame_callback)
         // and read (copied) from ROS service thread (nomagicGetLatestFrameCallback)

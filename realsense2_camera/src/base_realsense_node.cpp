@@ -239,7 +239,7 @@ void BaseRealSenseNode::publishTopics()
 {
     getParameters();
     setupDevice();
-    setupFilters();
+    setupFilters(_filters);
     registerDynamicReconfigCb(_node_handle);
     setupErrorCallback();
     enable_devices();
@@ -1102,7 +1102,7 @@ void BaseRealSenseNode::enable_devices()
     }
 }
 
-void BaseRealSenseNode::setupFilters()
+void BaseRealSenseNode::setupFilters(std::vector<NamedFilter>& filters)
 {
     std::vector<std::string> filters_str;
     boost::split(filters_str, _filters_str, [](char c){return c == ',';});
@@ -1122,17 +1122,17 @@ void BaseRealSenseNode::setupFilters()
         else if ((*s_iter) == "spatial")
         {
             ROS_INFO("Add Filter: spatial");
-            _filters.push_back(NamedFilter("spatial", std::make_shared<rs2::spatial_filter>()));
+            filters.push_back(NamedFilter("spatial", std::make_shared<rs2::spatial_filter>()));
         }
         else if ((*s_iter) == "temporal")
         {
             ROS_INFO("Add Filter: temporal");
-            _filters.push_back(NamedFilter("temporal", std::make_shared<rs2::temporal_filter>()));
+            filters.push_back(NamedFilter("temporal", std::make_shared<rs2::temporal_filter>()));
         }
         else if ((*s_iter) == "hole_filling")
         {
             ROS_INFO("Add Filter: hole_filling");
-            _filters.push_back(NamedFilter("hole_filling", std::make_shared<rs2::hole_filling_filter>()));
+            filters.push_back(NamedFilter("hole_filling", std::make_shared<rs2::hole_filling_filter>()));
         }
         else if ((*s_iter) == "decimation")
         {
@@ -1151,19 +1151,19 @@ void BaseRealSenseNode::setupFilters()
     if (use_disparity_filter)
     {
         ROS_INFO("Add Filter: disparity");
-        _filters.insert(_filters.begin(), NamedFilter("disparity_start", std::make_shared<rs2::disparity_transform>()));
-        _filters.push_back(NamedFilter("disparity_end", std::make_shared<rs2::disparity_transform>(false)));
+        filters.insert(filters.begin(), NamedFilter("disparity_start", std::make_shared<rs2::disparity_transform>()));
+        filters.push_back(NamedFilter("disparity_end", std::make_shared<rs2::disparity_transform>(false)));
         ROS_INFO("Done Add Filter: disparity");
     }
     if (use_decimation_filter)
     {
       ROS_INFO("Add Filter: decimation");
-      _filters.insert(_filters.begin(),NamedFilter("decimation", std::make_shared<rs2::decimation_filter>()));
+      filters.insert(filters.begin(),NamedFilter("decimation", std::make_shared<rs2::decimation_filter>()));
     }
     if (use_colorizer_filter)
     {
         ROS_INFO("Add Filter: colorizer");
-        _filters.push_back(NamedFilter("colorizer", std::make_shared<rs2::colorizer>()));
+        filters.push_back(NamedFilter("colorizer", std::make_shared<rs2::colorizer>()));
 
         // Types for depth stream
         _image_format[DEPTH.first] = _image_format[COLOR.first];    // CVBridge type
@@ -1180,9 +1180,9 @@ void BaseRealSenseNode::setupFilters()
     if (_pointcloud)
     {
     	ROS_INFO("Add Filter: pointcloud");
-        _filters.push_back(NamedFilter("pointcloud", std::make_shared<rs2::pointcloud>(_pointcloud_texture.first, _pointcloud_texture.second)));
+        filters.push_back(NamedFilter("pointcloud", std::make_shared<rs2::pointcloud>(_pointcloud_texture.first, _pointcloud_texture.second)));
     }
-    ROS_INFO("num_filters: %d", static_cast<int>(_filters.size()));
+    ROS_INFO("num_filters: %d", static_cast<int>(filters.size()));
 }
 
 cv::Mat& BaseRealSenseNode::fix_depth_scale(const cv::Mat& from_image, cv::Mat& to_image)
@@ -2549,6 +2549,9 @@ void BaseRealSenseNode::nomagicSetup()
         }
     }
 
+    // Create separate filters to avoid temporal filter state data races
+    setupFilters(nomagic_filters);
+
     // Setup diagnostics
     nomagic_frameset_fragmentation_diagnostics.add("[NOMAGIC] Framesets Fragmentation Status",
                                                    this, &BaseRealSenseNode::nomagicFramesetsDiagnosticsCallback);
@@ -2731,7 +2734,7 @@ rs2::frameset BaseRealSenseNode::nomagicApplyFilters(boost::circular_buffer<rs2:
         bool is_inner_frame = !(frames_processed == 0 || frames_processed == static_cast<int>(queue.capacity()) - 1);
         bool skip_spatial = nomagic_skip_spatial_filter_for_inner_frames && is_inner_frame;
 
-        for (const NamedFilter& named_filter : _filters) {
+        for (const NamedFilter& named_filter : nomagic_filters) {
             if (named_filter._name != "spatial" && named_filter._name != "temporal") {
                 continue; // Skip unknown filters (like pointcloud)
             }
@@ -2777,7 +2780,7 @@ rs2::frame BaseRealSenseNode::nomagicGetDepthAlignedTo(stream_index_pair stream,
     rs2::frame aligned_depth = frameset.apply_filter(*align).as<rs2::frameset>().get_depth_frame();
 
     // Apply colorizer filter if present
-    for (const auto & _filter : _filters) {
+    for (const auto & _filter : nomagic_filters) {
         if (_filter._name == "colorizer") {
             ROS_INFO("[NOMAGIC] Applying colorizer filter");
             return _filter._filter->process(aligned_depth);
@@ -2825,7 +2828,7 @@ void BaseRealSenseNode::nomagicResetTemporalFilter()
 {
     ROS_INFO("[NOMAGIC] Resetting temporal filter's state");
     // Temporal filter resets after changing any of its parameters (even to the same value).
-    for (const NamedFilter& named_filter : _filters) {
+    for (const NamedFilter& named_filter : nomagic_filters) {
         if (named_filter._name == "temporal") {
             auto value = named_filter._filter->get_option(RS2_OPTION_FILTER_SMOOTH_ALPHA);
             named_filter._filter->set_option(RS2_OPTION_FILTER_SMOOTH_ALPHA, value);

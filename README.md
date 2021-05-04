@@ -16,6 +16,9 @@ When upgrading the base version (from Intel), keep NoMagic's version unchanged.
 #### 0.2.0
 
 - Feature: implemented get_latest_frame service using lazy filtering.
+Note: to enable it, pass roslaunch argument nomagic_lazy_filtering:=true
+Warning: This change causes filtering to be done only when depth image topics is subscribed.
+Warning: Make sure that image topics are either used continuously (no subscribe, get image, unsubscribe pattern) or not at all. 
 
 #### 0.1.1
 
