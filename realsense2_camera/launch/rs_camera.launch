@@ -64,7 +64,7 @@
 
   <arg name="nomagic_lazy_filtering_frame_history_size"    default="9"/>
   <arg name="nomagic_skip_spatial_filter_for_inner_frames" default="true"/>
-  <arg name="nomagic_lazy_filtering"                       default="true"/>
+  <arg name="nomagic_lazy_filtering"                       default="false"/>
 
   <group ns="$(arg camera)">
     <include file="$(find realsense2_camera)/launch/includes/nodelet.launch.xml">

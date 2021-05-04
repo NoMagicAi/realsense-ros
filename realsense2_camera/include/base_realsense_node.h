@@ -333,7 +333,7 @@ namespace realsense2_camera
 
         int  nomagic_lazy_filtering_frame_history_size = 9;
         bool nomagic_skip_spatial_filter_for_inner_frames = true;
-        bool nomagic_lazy_filtering = true;
+        bool nomagic_lazy_filtering = false;
 
         std::map<stream_index_pair, ros::ServiceServer> nomagic_get_latest_frame_servers;
         std::map<stream_index_pair, ros::ServiceServer> nomagic_get_latest_aligned_frame_servers;
