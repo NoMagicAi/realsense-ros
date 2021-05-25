@@ -98,6 +98,11 @@
   <arg name="unite_imu_method"         default="none"/> <!-- Options are: [none, copy, linear_interpolation] -->
   <arg name="allow_no_texture_points"  default="false"/>
 
+  <arg name="nomagic_lazy_filtering_frame_history_size"    default="9"/>
+  <arg name="nomagic_skip_spatial_filter_for_inner_frames" default="true"/>
+  <arg name="nomagic_lazy_filtering"                       default="false"/>
+
+
 
   <node unless="$(arg external_manager)" pkg="nodelet" type="nodelet" name="$(arg manager)" args="manager" output="$(arg output)" required="$(arg required)"/>
   <node pkg="nodelet" type="nodelet" name="realsense2_camera" args="load realsense2_camera/RealSenseNodeFactory $(arg manager)" required="$(arg required)">
@@ -193,6 +198,10 @@
     <param name="initial_reset"            type="bool"   value="$(arg initial_reset)"/>
     <param name="unite_imu_method"         type="str"    value="$(arg unite_imu_method)"/>
     <param name="allow_no_texture_points"  type="bool"   value="$(arg allow_no_texture_points)"/>
+
+    <param name="nomagic_lazy_filtering_frame_history_size"    type="int"  value="$(arg nomagic_lazy_filtering_frame_history_size)"/>
+    <param name="nomagic_skip_spatial_filter_for_inner_frames" type="bool" value="$(arg nomagic_skip_spatial_filter_for_inner_frames)"/>
+    <param name="nomagic_lazy_filtering"                       type="bool" value="$(arg nomagic_lazy_filtering)"/>
 
   </node>
 </launch>
