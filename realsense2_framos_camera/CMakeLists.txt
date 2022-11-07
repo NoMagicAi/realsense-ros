@@ -35,8 +35,8 @@ if(SET_USER_BREAK_AT_STARTUP)
 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DBPDEBUG")
 endif()
 
-find_package(realsense2-framos 2.32.1)
-if(NOT realsense2-framos_FOUND)
+find_package(framos-realsense2 2.50.10)
+if(NOT framos-realsense2_FOUND)
     message(FATAL_ERROR "\n\n Intel RealSense SDK 2.0 is missing, please install it from https://github.com/IntelRealSense/librealsense/releases\n\n")
 endif()
 
@@ -69,7 +69,7 @@ generate_messages(
 set(CMAKE_NO_SYSTEM_FROM_IMPORTED true)
 include_directories(
     include
-    ${realsense2-framos_INCLUDE_DIR}
+    ${framos-realsense2_INCLUDE_DIR}
     ${catkin_INCLUDE_DIRS}
     )
 
@@ -104,7 +104,7 @@ target_include_directories(${PROJECT_NAME}
   PRIVATE ${realsense2_INCLUDE_DIR})
 
 target_link_libraries(${PROJECT_NAME}
-    ${realsense2-framos_LIBRARY}
+    ${framos-realsense2_LIBRARY}
     ${catkin_LIBRARIES}
     ${CMAKE_THREAD_LIBS_INIT}
     yaml-cpp
