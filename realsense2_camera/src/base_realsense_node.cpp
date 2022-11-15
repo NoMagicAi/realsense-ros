@@ -1107,9 +1107,12 @@ void BaseRealSenseNode::publishAlignedDepthToOthers(rs2::frameset frames, const 
             publishFrame(frames_to_publish.back(), t, sip,
                          _depth_aligned_image,
                          _depth_aligned_info_publisher,
-                         _depth_aligned_image_publishers, _depth_aligned_seq,
-                         _depth_aligned_camera_info, _optical_frame_id,
-                         _depth_aligned_encoding);
+                         _depth_aligned_image_publishers,
+                         false,
+                        _depth_aligned_seq,
+                        _depth_aligned_camera_info,
+                        _depth_aligned_encoding
+            );
         }
     }
 }
