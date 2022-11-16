@@ -6,6 +6,7 @@ option(BUILD_WITH_OPENMP "Use OpenMP" OFF)
 option(SET_USER_BREAK_AT_STARTUP "Set user wait point in startup (for debug)" OFF)
 
 add_definitions(-D_CRT_SECURE_NO_WARNINGS)
+add_definitions(-DFRAMOS)
 set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
 find_package(catkin REQUIRED COMPONENTS
