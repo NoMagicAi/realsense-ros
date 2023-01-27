@@ -1601,8 +1601,8 @@ void BaseRealSenseNode::frame_callback(rs2::frame frame) {
         clip_depth(depth_frame, _clipping_distance);
       }
 
-      //            nomagicStoreFramesetForLazyProcessing(frameset);
-      nomagic_muxer.invoke(frame);
+      nomagicStoreFramesetForLazyProcessing(frameset);
+      // nomagic_muxer.invoke(frame);
       bool apply_filters_now =
           nomagicAnyDepthHasSubscribers(frameset) || !nomagic_lazy_filtering;
       if (apply_filters_now) {
