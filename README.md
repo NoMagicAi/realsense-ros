@@ -17,6 +17,9 @@ When upgrading the base version (from Intel), keep NoMagic's version unchanged.
 
 ### Changelog:
 
+#### 0.3.1
+- Fixed a bug which caused the hdr filter to not be created correctly
+
 #### 0.3.0 
 - Bumped realsense-ros to 2.3.2, added D405 support
 
