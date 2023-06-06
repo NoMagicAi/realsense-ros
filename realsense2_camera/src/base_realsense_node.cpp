@@ -257,8 +257,8 @@ void BaseRealSenseNode::publishTopics() {
   getParameters();
   setupDevice();
   setupFilters(_filters);
-  registerDynamicReconfigCb(_node_handle);
   registerHDRoptions();
+  registerDynamicReconfigCb(_node_handle);
   setupErrorCallback();
   enable_devices();
   setupPublishers();
@@ -618,14 +618,14 @@ void BaseRealSenseNode::registerDynamicReconfigCb(ros::NodeHandle &nh) {
   for (rs2::sensor sensor : _dev_sensors) {
     std::string module_name =
         create_graph_resource_name(sensor.get_info(RS2_CAMERA_INFO_NAME));
-    ROS_DEBUG_STREAM("module_name:" << module_name);
+    ROS_INFO_STREAM("module_name:" << module_name);
     registerDynamicOption(nh, sensor, module_name);
   }
 
   for (NamedFilter nfilter : _filters) {
     std::string module_name = nfilter._name;
     auto sensor = *(nfilter._filter);
-    ROS_DEBUG_STREAM("module_name:" << module_name);
+    ROS_INFO_STREAM("module_name:" << module_name);
     registerDynamicOption(nh, sensor, module_name);
   }
   ROS_INFO("Done Setting Dynamic reconfig parameters.");
