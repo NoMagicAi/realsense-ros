@@ -473,6 +473,7 @@ void BaseRealSenseNode::registerDynamicOption(ros::NodeHandle &nh,
     rs2_option option = static_cast<rs2_option>(i);
     const std::string option_name(
         create_graph_resource_name(rs2_option_to_string(option)));
+    ROS_INFO_STREAM("option_name:" << option_name);
     try {
       if (!sensor.supports(option) || sensor.is_option_read_only(option)) {
         continue;
