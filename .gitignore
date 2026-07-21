@@ -6,3 +6,6 @@
 .idea/
 .vs/
 *.json
+
+# Locally-exported ROS1 baseline source (see docker/station-ros1/export_ros1_src.sh)
+docker/station-ros1/ros1-src/

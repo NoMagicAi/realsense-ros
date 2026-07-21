@@ -33,6 +33,9 @@ void BaseRealSenseNode::setup()
     setAvailableSensors();
     SetBaseStream();
     setupFilters();
+    // NOMAGIC: must run before setCallbackFunctions()/updateSensors() so the muxer
+    // exists before any sensor thread can reach the frame callback that reads it.
+    nomagicSetup();
     setCallbackFunctions();
     monitoringProfileChanges();
     updateSensors();
@@ -137,6 +140,12 @@ void BaseRealSenseNode::setAvailableSensors()
     ROS_INFO_STREAM("Sync Mode: " << ((_sync_frames)?"On":"Off"));
 
     std::function<void(rs2::frame)> frame_callback_function = [this](rs2::frame frame){
+        // NOMAGIC: feed raw sensor frames to the get_latest_frame muxer UPSTREAM of
+        // the syncer - the muxer pairs depth with the latest color itself; the syncer
+        // alone can starve color and leave the muxer without complete framesets.
+        // The streaming topics below still use the syncer/filters unchanged.
+        if (nomagic_muxer)
+            nomagic_muxer->invoke(frame);
         bool is_filter(_filters.end() != find_if(_filters.begin(), _filters.end(), [](std::shared_ptr<NamedFilter> f){return (f->is_enabled()); }));
         if (_sync_frames || is_filter)
             this->_asyncer.invoke(frame);
@@ -426,6 +435,10 @@ void BaseRealSenseNode::updateSensors()
         #endif
 
         startUpdatedSensors();
+
+        // NOMAGIC: keep the expected-stream set and get_latest_frame services in
+        // sync with the (possibly changed) publishers.
+        nomagicUpdateStreamsAndServices();
     }
     catch(const std::exception& ex)
     {

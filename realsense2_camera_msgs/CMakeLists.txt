@@ -43,6 +43,7 @@ set(msg_files
 rosidl_generate_interfaces(${PROJECT_NAME}
   ${msg_files}
   "srv/DeviceInfo.srv"
+  "srv/GetLatestFrame.srv"
   "srv/SafetyPresetRead.srv"
   "srv/SafetyPresetWrite.srv"
   "srv/SafetyInterfaceConfigRead.srv"
@@ -58,5 +59,11 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 )
 
 ament_export_dependencies(rosidl_default_runtime)
+
+# NOMAGIC: the ros1_bridge mapping rules exported by package.xml are read from
+# share/<pkg>/ at ros1_bridge build time, so they must be installed.
+install(FILES ros1_bridge_mapping_rules.yaml
+  DESTINATION share/${PROJECT_NAME}
+)
 
 ament_package()

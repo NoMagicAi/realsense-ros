@@ -32,6 +32,14 @@ namespace realsense2_camera
             void setPublisher();
             void Publish(rs2::points pc, const rclcpp::Time& t, const rs2::frameset& frameset, const std::string& frame_id);
 
+            // NOMAGIC: expose subscriber count for the lazy-filtering gate in
+            // frame_callback().
+            size_t getNumSubscribers()
+            {
+                std::lock_guard<std::mutex> lock(_mutex_publisher);
+                return _pointcloud_publisher ? _pointcloud_publisher->get_subscription_count() : 0;
+            }
+
         private:
             void setParameters();
 

@@ -33,11 +33,14 @@
 #include "realsense2_camera_msgs/msg/metadata.hpp"
 #include "realsense2_camera_msgs/msg/rgbd.hpp"
 #include "realsense2_camera_msgs/srv/device_info.hpp"
+#include "realsense2_camera_msgs/srv/get_latest_frame.hpp"  // NOMAGIC
 #include "realsense2_camera_msgs/srv/calib_config_read.hpp"
 #include "realsense2_camera_msgs/srv/calib_config_write.hpp"
 #include "realsense2_camera_msgs/srv/application_config_read.hpp"
 #include "realsense2_camera_msgs/srv/application_config_write.hpp"
 #include "realsense2_camera_msgs/srv/hardware_monitor_command_send.hpp"
+#include <boost/circular_buffer.hpp>          // NOMAGIC
+#include "nomagic_realsense_node.h"           // NOMAGIC (Clock helper)
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "realsense2_camera_msgs/action/triggered_calibration.hpp"
 #include <librealsense2/hpp/rs_processing.hpp>
@@ -442,6 +445,79 @@ namespace realsense2_camera
 #endif
 
 std::string _tf_prefix;
+
+        /****************************** NOMAGIC ******************************/
+        // NoMagic additions: per-stream GetLatestFrame service, frameset muxer +
+        // history buffer, lazy filtering, fragmentation/frequency diagnostics.
+        // Implementation in nomagic_realsense_node.cpp; design in ROS2_PORT_NOTES.md.
+
+        // Parameters (declared with defaults in getParameters()).
+        int nomagic_lazy_filtering_frame_history_size = 9;
+        bool nomagic_skip_spatial_filter_for_inner_frames = true;
+        bool nomagic_lazy_filtering = false;
+
+        // Per-stream services; all share nomagic_service_cb_group (MutuallyExclusive)
+        // so their callbacks are serialized.
+        std::map<stream_index_pair, rclcpp::Service<realsense2_camera_msgs::srv::GetLatestFrame>::SharedPtr> nomagic_get_latest_frame_servers;
+        std::map<stream_index_pair, rclcpp::Service<realsense2_camera_msgs::srv::GetLatestFrame>::SharedPtr> nomagic_get_latest_aligned_frame_servers;
+        rclcpp::CallbackGroup::SharedPtr nomagic_service_cb_group;
+
+        std::set<stream_index_pair> nomagic_expected_streams;
+
+        // Isolated filters for the on-demand replay - keeps the streaming path's
+        // temporal-filter state undisturbed by service calls.
+        std::shared_ptr<rs2::spatial_filter> nomagic_spatial_filter;
+        std::shared_ptr<rs2::temporal_filter> nomagic_temporal_filter;
+
+        // Written from the librealsense frame thread (muxer), read from the service
+        // thread.
+        std::mutex nomagic_frameset_queue_mutex;
+        boost::circular_buffer<rs2::frameset> nomagic_frameset_queue;
+
+        // Guards nomagic_expected_streams and nomagic_latest_frame_buffer (monitoring
+        // thread vs frame thread). Never held while acquiring
+        // nomagic_frameset_queue_mutex.
+        std::mutex nomagic_streams_mutex;
+
+        // Service-thread-private CV buffers; the driver's _images belongs to the
+        // frame thread and must not be shared.
+        std::map<stream_index_pair, cv::Mat> nomagic_images;
+
+        // Muxer processing block: defragments framesets and pushes complete ones
+        // onto the history queue. Created in nomagicSetup(), before sensors start.
+        std::shared_ptr<rs2::processing_block> nomagic_muxer;
+        std::map<stream_index_pair, rs2::frameset> nomagic_latest_frame_buffer;
+
+        // Fragmentation diagnostic counters (reset each publish period).
+        std::mutex nomagic_diagnostics_mutex;
+        int nomagic_received_framesets_last_period = 0;
+        int nomagic_incomplete_framesets_last_period = 0;
+        int nomagic_missing_depth_framesets_last_period = 0;
+        int nomagic_missing_color_framesets_last_period = 0;
+        // Per aligned-depth-stream frequency diagnostics (reuses the driver updater).
+        std::map<stream_index_pair, std::shared_ptr<FrequencyDiagnostics>> nomagic_aligned_depth_freq;
+
+        void nomagicSetup();
+        void nomagicUpdateStreamsAndServices();
+        void nomagicGetParameters();
+        void nomagicSetupService(stream_index_pair stream, bool is_aligned_depth);
+        void nomagicGetLatestFrameCallback(stream_index_pair stream, bool is_aligned_depth,
+                                           const realsense2_camera_msgs::srv::GetLatestFrame::Request::SharedPtr request,
+                                           realsense2_camera_msgs::srv::GetLatestFrame::Response::SharedPtr response);
+        void nomagicMuxerCallback(rs2::frame frame, rs2::frame_source& src);
+        void nomagicStoreFramesetForLazyProcessing(rs2::frameset frameset);
+        boost::circular_buffer<rs2::frameset> nomagicGetNonEmptyFramesetQueue();
+        rs2::frameset nomagicApplyFilters(boost::circular_buffer<rs2::frameset>&& queue);
+        void nomagicResetTemporalFilter();
+        rs2::frame nomagicGetDepthAlignedTo(stream_index_pair stream, rs2::frameset frameset);
+        rs2::frame nomagicFramesetToFrame(stream_index_pair stream, rs2::frameset frameset);
+        sensor_msgs::msg::Image nomagicFrameToMessage(stream_index_pair stream, rs2::frame frame);
+        bool nomagicAnyDepthHasSubscribers(const rs2::frameset& frameset);
+        std::set<stream_index_pair> nomagicFindMissingStreamsInFrameset(const rs2::frameset& frameset);
+        std::string nomagicFramesetDescriptionString(const rs2::frameset& frameset);
+        void nomagicFramesetsDiagnosticsCallback(diagnostic_updater::DiagnosticStatusWrapper& status);
+        static double nomagicGetUnixTimestamp();
+        /**************************** END NOMAGIC ****************************/
 
     };//end class
 }

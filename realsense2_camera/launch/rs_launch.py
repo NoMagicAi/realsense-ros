@@ -99,6 +99,10 @@ configurable_parameters = [{'name': 'camera_name',                  'default': '
                            {'name': 'depth_mapping_camera.labeled_point_cloud_profile', 'default': '0,0,0', 'description': "'Label PointCloud stream profile'"},
                            {'name': 'enable_occupancy',             'default': 'false', 'description': "'enable occupancy stream'"},
                            {'name': 'depth_mapping_camera.occupancy_profile', 'default': '0,0,0', 'description': "'Occupancy stream profile'"},
+                           # NOMAGIC: lazily-filtered get_latest_frame service parameters.
+                           {'name': 'nomagic_lazy_filtering',                     'default': 'false', 'description': "'[NOMAGIC] only run depth filtering on the streaming path when subscribed; filter on-demand in get_latest_frame otherwise'"},
+                           {'name': 'nomagic_lazy_filtering_frame_history_size',  'default': '9',     'description': "'[NOMAGIC] number of framesets kept for the on-demand filter replay'"},
+                           {'name': 'nomagic_skip_spatial_filter_for_inner_frames','default': 'true', 'description': "'[NOMAGIC] skip spatial filter on inner history frames during the replay'"},
                           ]
 
 def declare_configurable_parameters(parameters):

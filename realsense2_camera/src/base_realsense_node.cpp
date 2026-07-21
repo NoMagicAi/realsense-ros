@@ -579,10 +579,20 @@ void BaseRealSenseNode::frame_callback(rs2::frame frame)
         rs2::video_frame original_color_frame = frameset.get_color_frame();
         rs2::video_frame original_infra2_frame = frameset.get_infrared_frame(2);
 
+        // NOMAGIC lazy filtering: only run the streaming-path depth filters when
+        // something actually consumes depth (the muxer is fed upstream of the syncer).
+        bool apply_filters_now = !nomagic_lazy_filtering ||
+                                 nomagicAnyDepthHasSubscribers(frameset) ||
+                                 (_pc_filter && 0 != _pc_filter->getNumSubscribers()) ||
+                                 (_rgbd_publisher && 0 != _rgbd_publisher->get_subscription_count());
+
         ROS_DEBUG("num_filters: %d", static_cast<int>(_filters.size()));
-        for (auto filter_it : _filters)
+        if (apply_filters_now)
         {
-            frameset = filter_it->Process(frameset);
+            for (auto filter_it : _filters)
+            {
+                frameset = filter_it->Process(frameset);
+            }
         }
 
         ROS_DEBUG("List of frameset after applying filters: size: %d", static_cast<int>(frameset.size()));

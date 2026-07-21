@@ -33,5 +33,8 @@
 
   <export>
     <build_type>ament_cmake</build_type>
+    <!-- NOMAGIC: pair nomagic_msgs/GetLatestFrame (ROS1) with this package's GetLatestFrame so
+         ros1_bridge generates a service factory for it. See ros1_bridge_mapping_rules.yaml. -->
+    <ros1_bridge mapping_rules="ros1_bridge_mapping_rules.yaml"/>
   </export>
 </package>

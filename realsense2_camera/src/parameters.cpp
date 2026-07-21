@@ -104,6 +104,7 @@ void BaseRealSenseNode::getParameters()
     _parameters_names.push_back(param_name);
 #endif
 
+    nomagicGetParameters();  // NOMAGIC: lazy-filtering parameters
 }
 
 void BaseRealSenseNode::setDynamicParams()

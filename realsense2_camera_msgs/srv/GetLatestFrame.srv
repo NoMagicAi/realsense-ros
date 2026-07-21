@@ -1,0 +1,15 @@
+---
+sensor_msgs/Image image
+float64 frame_timestamp
+float64 request_timestamp
+float64 response_timestamp
+
+float64 wait_for_frames_duration
+float64 reset_temporal_filter_duration
+float64 filtering_duration
+float64 depth_alignment_duration
+
+# Appended after the ROS1-identical fields: failure is signaled in-band (a ROS2
+# service callback cannot fail the call). Clients must check `success`.
+bool success
+string error_message

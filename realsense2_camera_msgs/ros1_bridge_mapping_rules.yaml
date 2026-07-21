@@ -1,0 +1,13 @@
+# ros1_bridge mapping rules for this package (NOMAGIC addition).
+#
+# Pairs nomagic_msgs/GetLatestFrame (ROS1) with this package's GetLatestFrame so ros1_bridge
+# generates a service factory (it only auto-pairs services whose package names are equal).
+# The rule must live here, exported via package.xml: ros1_bridge collects service rules only
+# from installed packages' manifest exports, not from its own message_mappings.yaml.
+# NB: ros1_bridge also requires equal request/response field counts with positional matches --
+# keep srv/GetLatestFrame.srv field-identical to nomagic_msgs/srv/GetLatestFrame.srv.
+-
+  ros1_package_name: 'nomagic_msgs'
+  ros1_service_name: 'GetLatestFrame'
+  ros2_package_name: 'realsense2_camera_msgs'
+  ros2_service_name: 'GetLatestFrame'

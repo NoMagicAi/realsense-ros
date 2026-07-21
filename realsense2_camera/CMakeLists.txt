@@ -160,10 +160,13 @@ if(NOT realsense2_FOUND)
     message(FATAL_ERROR "\n\n RealSense SDK 2.0 is missing, please install it from https://github.com/realsenseai/librealsense/releases\n\n")
 endif()
 
+find_package(Boost REQUIRED)  # NOMAGIC: boost::circular_buffer for the get_latest_frame history
+
 #set(CMAKE_NO_SYSTEM_FROM_IMPORTED true)
 include_directories(include)
 
 include_directories(${OpenCV_INCLUDE_DIRS})  # add OpenCV includes to the included dirs
+include_directories(${Boost_INCLUDE_DIRS})   # NOMAGIC
 
 set(node_plugins "")
 
@@ -184,6 +187,7 @@ set(SOURCES
     src/tfs.cpp
     src/actions.cpp
     src/safety.cpp
+    src/nomagic_realsense_node.cpp
   )
 
 if (BUILD_ACCELERATE_GPU_WITH_GLSL)
