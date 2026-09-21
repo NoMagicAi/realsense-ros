@@ -272,7 +272,10 @@ void RealSenseNodeFactory::initialize(const ros::WallTimerEvent &ignored)
 				ROS_INFO_STREAM("publish topics from rosbag file: " << rosbag_filename.c_str());
 				auto pipe = std::make_shared<rs2::pipeline>();
 				rs2::config cfg;
-				cfg.enable_device_from_file(rosbag_filename.c_str(), false);
+				// TEMP hardcode for ATASK-819 local testing - loops the bag so the container
+				// stays healthy past the bag's original duration. Etap 2 pkt 2: expose as a
+				// proper ROS launch parameter instead of hardcoding.
+				cfg.enable_device_from_file(rosbag_filename.c_str(), true);
 				cfg.enable_all_streams();
 				pipe->start(cfg); //File will be opened in read mode at this point
 				_device = pipe->get_active_profile().get_device();
