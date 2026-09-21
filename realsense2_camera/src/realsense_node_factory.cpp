@@ -276,13 +276,13 @@ void RealSenseNodeFactory::initialize(const ros::WallTimerEvent &ignored)
 				// stays healthy past the bag's original duration. Etap 2 pkt 2: expose as a
 				// proper ROS launch parameter instead of hardcoding.
 				bool repeat_playback = true;
-				ROS_INFO_STREAM("[ATASK-819] enable_device_from_file repeat_playback=" << (repeat_playback ? "true" : "false"));
+				ROS_ERROR_STREAM("[ATASK-819] enable_device_from_file repeat_playback=" << (repeat_playback ? "true" : "false"));
 				cfg.enable_device_from_file(rosbag_filename.c_str(), repeat_playback);
 				cfg.enable_all_streams();
 				pipe->start(cfg); //File will be opened in read mode at this point
 				_device = pipe->get_active_profile().get_device();
 				_serial_no = _device.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
-				ROS_INFO_STREAM("[ATASK-819] playback device is_real_time=" << (_device.as<rs2::playback>().is_real_time() ? "true" : "false"));
+				ROS_ERROR_STREAM("[ATASK-819] playback device is_real_time=" << (_device.as<rs2::playback>().is_real_time() ? "true" : "false"));
 			}
 			if (_device)
 			{
