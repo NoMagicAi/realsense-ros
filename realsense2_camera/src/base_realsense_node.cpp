@@ -93,10 +93,9 @@ std::string BaseRealSenseNode::getNamespaceStr() {
 BaseRealSenseNode::BaseRealSenseNode(ros::NodeHandle &nodeHandle,
                                      ros::NodeHandle &privateNodeHandle,
                                      rs2::device dev,
-                                     const std::string &serial_no,
-                                     bool external_frame_source)
+                                     const std::string &serial_no)
     : _is_running(true), _base_frame_id(""), _node_handle(nodeHandle),
-      _pnh(privateNodeHandle), _dev(dev), _external_frame_source(external_frame_source),
+      _pnh(privateNodeHandle), _dev(dev), _frames_fed_externally(dev.is<rs2::playback>()),
       _json_file_path(""),
       _serial_no(serial_no), _is_initialized_time_base(false),
       _namespace(getNamespaceStr()),
@@ -172,9 +171,9 @@ BaseRealSenseNode::~BaseRealSenseNode() {
     _monitoring_t->join();
   }
 
-  // ATASK-819: in external_frame_source mode, sensors were never opened/started here (see
-  // setupStreams()) -- an externally-owned rs2::pipeline owns their lifecycle instead.
-  if (!_external_frame_source) {
+  // Sensors were never opened/started here for a playback device (see setupStreams()) -- an
+  // externally-owned rs2::pipeline owns their lifecycle instead.
+  if (!_frames_fed_externally) {
     std::set<std::string> module_names;
     for (const std::pair<stream_index_pair, std::vector<rs2::stream_profile>>
              &profile : _enabled_profiles) {
@@ -1868,10 +1867,10 @@ void BaseRealSenseNode::setupStreams() {
              &sensor_profile : profiles) {
       std::string module_name = sensor_profile.first;
       rs2::sensor sensor = active_sensors[module_name];
-      // ATASK-819: in external_frame_source mode (rosbag playback), an externally-owned
-      // rs2::pipeline already owns opening/starting the sensors and feeds us synced framesets
-      // via feedFrame() -- calling sensor.open()/start() here too would conflict with that.
-      if (!_external_frame_source) {
+      // For a playback device (rosbag_filename mode), an externally-owned rs2::pipeline already
+      // owns opening/starting the sensors and feeds us synced framesets via feedFrame() -- calling
+      // sensor.open()/start() here too would conflict with that.
+      if (!_frames_fed_externally) {
         sensor.open(sensor_profile.second);
         sensor.start(_sensors_callback[module_name]);
       }

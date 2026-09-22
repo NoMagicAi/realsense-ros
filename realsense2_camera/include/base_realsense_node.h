@@ -117,19 +117,16 @@ class BaseRealSenseNode : public InterfaceRealSenseNode {
 public:
   BaseRealSenseNode(ros::NodeHandle &nodeHandle,
                     ros::NodeHandle &privateNodeHandle, rs2::device dev,
-                    const std::string &serial_no,
-                    bool external_frame_source = false);
+                    const std::string &serial_no);
 
   virtual void toggleSensors(bool enabled) override;
   virtual void publishTopics() override;
   virtual void registerDynamicReconfigCb(ros::NodeHandle &nh) override;
   virtual ~BaseRealSenseNode();
 
-  // ATASK-819: feed a frame obtained from an externally-owned rs2::pipeline (see
-  // RealSenseNodeFactory's rosbag_filename handling) into the same path normally driven by
-  // setupStreams()'s sensor.start(_syncer). Only meaningful when constructed with
-  // external_frame_source=true, which also makes setupStreams() skip its own sensor.open()/start()
-  // calls, since rs2::pipeline already owns streaming in that mode.
+  // Feed a frame obtained from an externally-owned rs2::pipeline (see RealSenseNodeFactory's
+  // rosbag_filename handling) into the same path normally driven by setupStreams()'s
+  // sensor.start(_syncer). Only meaningful when _frames_fed_externally is true.
   void feedFrame(rs2::frame frame) { frame_callback(frame); }
 
 public:
@@ -266,7 +263,10 @@ private:
   void publishServices();
 
   rs2::device _dev;
-  bool _external_frame_source;
+  // Playback devices (rosbag_filename mode) get their synced framesets fed in from outside via
+  // feedFrame() -- setupStreams()/the destructor must not also try to open/start/stop the sensors
+  // themselves in that case, since an externally-owned rs2::pipeline already does.
+  bool _frames_fed_externally;
   std::map<stream_index_pair, rs2::sensor> _sensors;
   std::map<std::string, std::function<void(rs2::frame)>> _sensors_callback;
   std::vector<std::shared_ptr<ddynamic_reconfigure::DDynamicReconfigure>>
