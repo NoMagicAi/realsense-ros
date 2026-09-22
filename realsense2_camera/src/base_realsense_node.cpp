@@ -93,9 +93,11 @@ std::string BaseRealSenseNode::getNamespaceStr() {
 BaseRealSenseNode::BaseRealSenseNode(ros::NodeHandle &nodeHandle,
                                      ros::NodeHandle &privateNodeHandle,
                                      rs2::device dev,
-                                     const std::string &serial_no)
+                                     const std::string &serial_no,
+                                     bool external_frame_source)
     : _is_running(true), _base_frame_id(""), _node_handle(nodeHandle),
-      _pnh(privateNodeHandle), _dev(dev), _json_file_path(""),
+      _pnh(privateNodeHandle), _dev(dev), _external_frame_source(external_frame_source),
+      _json_file_path(""),
       _serial_no(serial_no), _is_initialized_time_base(false),
       _namespace(getNamespaceStr()),
       nomagic_muxer([&](rs2::frame f, rs2::frame_source &src) {
@@ -170,20 +172,24 @@ BaseRealSenseNode::~BaseRealSenseNode() {
     _monitoring_t->join();
   }
 
-  std::set<std::string> module_names;
-  for (const std::pair<stream_index_pair, std::vector<rs2::stream_profile>>
-           &profile : _enabled_profiles) {
-    try {
-      std::string module_name =
-          _sensors[profile.first].get_info(RS2_CAMERA_INFO_NAME);
-      std::pair<std::set<std::string>::iterator, bool> res =
-          module_names.insert(module_name);
-      if (res.second) {
-        _sensors[profile.first].stop();
-        _sensors[profile.first].close();
+  // ATASK-819: in external_frame_source mode, sensors were never opened/started here (see
+  // setupStreams()) -- an externally-owned rs2::pipeline owns their lifecycle instead.
+  if (!_external_frame_source) {
+    std::set<std::string> module_names;
+    for (const std::pair<stream_index_pair, std::vector<rs2::stream_profile>>
+             &profile : _enabled_profiles) {
+      try {
+        std::string module_name =
+            _sensors[profile.first].get_info(RS2_CAMERA_INFO_NAME);
+        std::pair<std::set<std::string>::iterator, bool> res =
+            module_names.insert(module_name);
+        if (res.second) {
+          _sensors[profile.first].stop();
+          _sensors[profile.first].close();
+        }
+      } catch (const rs2::error &e) {
+        ROS_ERROR_STREAM("Exception: " << e.what());
       }
-    } catch (const rs2::error &e) {
-      ROS_ERROR_STREAM("Exception: " << e.what());
     }
   }
 }
@@ -1862,8 +1868,13 @@ void BaseRealSenseNode::setupStreams() {
              &sensor_profile : profiles) {
       std::string module_name = sensor_profile.first;
       rs2::sensor sensor = active_sensors[module_name];
-      sensor.open(sensor_profile.second);
-      sensor.start(_sensors_callback[module_name]);
+      // ATASK-819: in external_frame_source mode (rosbag playback), an externally-owned
+      // rs2::pipeline already owns opening/starting the sensors and feeds us synced framesets
+      // via feedFrame() -- calling sensor.open()/start() here too would conflict with that.
+      if (!_external_frame_source) {
+        sensor.open(sensor_profile.second);
+        sensor.start(_sensors_callback[module_name]);
+      }
       if (sensor.is<rs2::depth_sensor>()) {
         _depth_scale_meters = sensor.as<rs2::depth_sensor>().get_depth_scale();
       }

@@ -268,25 +268,43 @@ void RealSenseNodeFactory::initialize(const ros::WallTimerEvent &ignored)
 
 		if (!rosbag_filename.empty())
 		{
+			ROS_INFO_STREAM("publish topics from rosbag file: " << rosbag_filename.c_str());
+
+			// ATASK-819: a bare rs2::syncer (what setupStreams() uses for live hardware, fed by
+			// sequential per-sensor sensor.start() calls) never syncs a single frameset when reading
+			// from a playback device -- empirically verified against 3 different bags, 0% sync rate.
+			// rs2::pipeline's own internal sync does not have this problem (100% sync rate in the
+			// same test), so in bag mode we keep the pipeline alive for the node's whole lifetime and
+			// feed its already-synced framesets directly into BaseRealSenseNode::feedFrame(), instead
+			// of letting setupStreams() open/start the sensors itself (external_frame_source=true).
+			// Looping is not configurable: a rosbag is always shorter than a real test run, so
+			// rosbag_filename implies "loop forever" -- there is no meaningful one-shot use case here.
+			// This mechanism lives entirely inside rs2::pipeline (see librealsense
+			// src/pipeline/pipeline.cpp) and never engages if the pipeline is destroyed right after
+			// resolving the device, which is what the old code did.
+			_bagPipe = std::make_shared<rs2::pipeline>(_ctx);
+			rs2::config cfg;
+			cfg.enable_device_from_file(rosbag_filename.c_str(), /*repeat_playback=*/true);
+			cfg.enable_all_streams();
+			auto profile = _bagPipe->start(cfg, [this](rs2::frame f)
 			{
-				ROS_INFO_STREAM("publish topics from rosbag file: " << rosbag_filename.c_str());
-				auto pipe = std::make_shared<rs2::pipeline>();
-				rs2::config cfg;
-				// TEMP hardcode for ATASK-819 local testing - loops the bag so the container
-				// stays healthy past the bag's original duration. Etap 2 pkt 2: expose as a
-				// proper ROS launch parameter instead of hardcoding.
-				bool repeat_playback = true;
-				ROS_ERROR_STREAM("[ATASK-819] enable_device_from_file repeat_playback=" << (repeat_playback ? "true" : "false"));
-				cfg.enable_device_from_file(rosbag_filename.c_str(), repeat_playback);
-				cfg.enable_all_streams();
-				pipe->start(cfg); //File will be opened in read mode at this point
-				_device = pipe->get_active_profile().get_device();
-				_serial_no = _device.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
-				ROS_ERROR_STREAM("[ATASK-819] playback device is_real_time=" << (_device.as<rs2::playback>().is_real_time() ? "true" : "false"));
-			}
+				ROS_WARN_STREAM("[ATASK-819] bagPipe callback fired, is_frameset=" << f.is<rs2::frameset>()
+					<< " stream=" << (f.get_profile() ? f.get_profile().stream_name() : "?"));
+				auto base_node = std::dynamic_pointer_cast<BaseRealSenseNode>(_realSenseNode);
+				if (base_node)
+				{
+					base_node->feedFrame(f);
+				}
+				// else: frame arrived before StartDevice() below finished constructing
+				// _realSenseNode -- dropped, same as live hardware frames arriving before subscribers
+				// are ready.
+			});
+			_device = profile.get_device();
+			_serial_no = _device.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
+
 			if (_device)
 			{
-				StartDevice();
+				StartDevice(true);
 			}
 		}
 		else
@@ -350,7 +368,7 @@ void RealSenseNodeFactory::initialize(const ros::WallTimerEvent &ignored)
 	}
 }
 
-void RealSenseNodeFactory::StartDevice()
+void RealSenseNodeFactory::StartDevice(bool external_frame_source)
 {
 	if (_realSenseNode) _realSenseNode.reset();
 	try
@@ -382,7 +400,7 @@ void RealSenseNodeFactory::StartDevice()
 		case RS_L515_PID_PRE_PRQ:
 		case RS_L515_PID:
 		case RS_L535_PID:
-			_realSenseNode = std::shared_ptr<BaseRealSenseNode>(new BaseRealSenseNode(nh, privateNh, _device, _serial_no));
+			_realSenseNode = std::shared_ptr<BaseRealSenseNode>(new BaseRealSenseNode(nh, privateNh, _device, _serial_no, external_frame_source));
 			break;
 		case RS_T265_PID:
 			_realSenseNode = std::shared_ptr<T265RealsenseNode>(new T265RealsenseNode(nh, privateNh, _device, _serial_no));

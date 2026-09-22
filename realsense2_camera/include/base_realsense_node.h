@@ -117,12 +117,20 @@ class BaseRealSenseNode : public InterfaceRealSenseNode {
 public:
   BaseRealSenseNode(ros::NodeHandle &nodeHandle,
                     ros::NodeHandle &privateNodeHandle, rs2::device dev,
-                    const std::string &serial_no);
+                    const std::string &serial_no,
+                    bool external_frame_source = false);
 
   virtual void toggleSensors(bool enabled) override;
   virtual void publishTopics() override;
   virtual void registerDynamicReconfigCb(ros::NodeHandle &nh) override;
   virtual ~BaseRealSenseNode();
+
+  // ATASK-819: feed a frame obtained from an externally-owned rs2::pipeline (see
+  // RealSenseNodeFactory's rosbag_filename handling) into the same path normally driven by
+  // setupStreams()'s sensor.start(_syncer). Only meaningful when constructed with
+  // external_frame_source=true, which also makes setupStreams() skip its own sensor.open()/start()
+  // calls, since rs2::pipeline already owns streaming in that mode.
+  void feedFrame(rs2::frame frame) { frame_callback(frame); }
 
 public:
   enum imu_sync_method { NONE, COPY, LINEAR_INTERPOLATION };
@@ -258,6 +266,7 @@ private:
   void publishServices();
 
   rs2::device _dev;
+  bool _external_frame_source;
   std::map<stream_index_pair, rs2::sensor> _sensors;
   std::map<std::string, std::function<void(rs2::frame)>> _sensors_callback;
   std::vector<std::shared_ptr<ddynamic_reconfigure::DDynamicReconfigure>>
