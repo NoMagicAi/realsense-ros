@@ -124,9 +124,8 @@ public:
   virtual void registerDynamicReconfigCb(ros::NodeHandle &nh) override;
   virtual ~BaseRealSenseNode();
 
-  // Feed a frame obtained from an externally-owned rs2::pipeline (see RealSenseNodeFactory's
-  // rosbag_filename handling) into the same path normally driven by setupStreams()'s
-  // sensor.start(_syncer). Only meaningful when _frames_fed_externally is true.
+  // Feeds a frame from an externally-owned rs2::pipeline (RealSenseNodeFactory's rosbag_filename
+  // handling) into frame_callback(), bypassing sensor.start(_syncer).
   void feedFrame(rs2::frame frame) { frame_callback(frame); }
 
 public:
@@ -263,10 +262,6 @@ private:
   void publishServices();
 
   rs2::device _dev;
-  // Playback devices (rosbag_filename mode) get their synced framesets fed in from outside via
-  // feedFrame() -- setupStreams()/the destructor must not also try to open/start/stop the sensors
-  // themselves in that case, since an externally-owned rs2::pipeline already does.
-  bool _frames_fed_externally;
   std::map<stream_index_pair, rs2::sensor> _sensors;
   std::map<std::string, std::function<void(rs2::frame)>> _sensors_callback;
   std::vector<std::shared_ptr<ddynamic_reconfigure::DDynamicReconfigure>>
@@ -387,6 +382,7 @@ private:
 
   rs2::processing_block nomagic_muxer;
   std::map<stream_index_pair, rs2::frameset> nomagic_latest_frame_buffer;
+  bool _frames_fed_externally; // true for a playback device fed via feedFrame()
 
   void nomagicSetup();
   void nomagicGetParameters();

@@ -270,16 +270,6 @@ void RealSenseNodeFactory::initialize(const ros::WallTimerEvent &ignored)
 		{
 			ROS_INFO_STREAM("publish topics from rosbag file: " << rosbag_filename.c_str());
 
-			// A bare rs2::syncer (what setupStreams() uses for live hardware) never syncs a single
-			// frameset when reading from a playback device -- empirically verified against 3 different
-			// bags, 0% sync rate. rs2::pipeline's own internal sync does not have this problem, so we
-			// keep the pipeline alive for the node's whole lifetime and feed its already-synced
-			// framesets directly into BaseRealSenseNode::feedFrame(), bypassing setupStreams()'s own
-			// sensor.open()/start() (gated by _frames_fed_externally there).
-			// Looping is not configurable: a rosbag is always shorter than a real test run, so
-			// rosbag_filename implies "loop forever". That mechanism lives entirely inside rs2::pipeline
-			// (librealsense src/pipeline/pipeline.cpp) and requires the pipeline to stay alive for the
-			// whole node lifetime to keep working.
 			_file_playback_pipeline = std::make_shared<rs2::pipeline>(_ctx);
 			rs2::config cfg;
 			cfg.enable_device_from_file(rosbag_filename.c_str(), /*repeat_playback=*/true);
@@ -291,9 +281,6 @@ void RealSenseNodeFactory::initialize(const ros::WallTimerEvent &ignored)
 				{
 					base_node->feedFrame(f);
 				}
-				// else: frame arrived before StartDevice() below finished constructing
-				// _realSenseNode -- dropped, same as live hardware frames arriving before subscribers
-				// are ready.
 			});
 			_device = profile.get_device();
 			_serial_no = _device.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
