@@ -100,7 +100,8 @@ BaseRealSenseNode::BaseRealSenseNode(ros::NodeHandle &nodeHandle,
       _namespace(getNamespaceStr()),
       nomagic_muxer([&](rs2::frame f, rs2::frame_source &src) {
         nomagicMuxerCallback(f, src);
-      }) {
+      }),
+      _frames_fed_externally(dev.is<rs2::playback>()) {
   // Types for depth stream
   _format[RS2_STREAM_DEPTH] = RS2_FORMAT_Z16;
   _image_format[RS2_STREAM_DEPTH] = CV_16UC1; // CVBridge type
@@ -170,20 +171,22 @@ BaseRealSenseNode::~BaseRealSenseNode() {
     _monitoring_t->join();
   }
 
-  std::set<std::string> module_names;
-  for (const std::pair<stream_index_pair, std::vector<rs2::stream_profile>>
-           &profile : _enabled_profiles) {
-    try {
-      std::string module_name =
-          _sensors[profile.first].get_info(RS2_CAMERA_INFO_NAME);
-      std::pair<std::set<std::string>::iterator, bool> res =
-          module_names.insert(module_name);
-      if (res.second) {
-        _sensors[profile.first].stop();
-        _sensors[profile.first].close();
+  if (!_frames_fed_externally) {
+    std::set<std::string> module_names;
+    for (const std::pair<stream_index_pair, std::vector<rs2::stream_profile>>
+             &profile : _enabled_profiles) {
+      try {
+        std::string module_name =
+            _sensors[profile.first].get_info(RS2_CAMERA_INFO_NAME);
+        std::pair<std::set<std::string>::iterator, bool> res =
+            module_names.insert(module_name);
+        if (res.second) {
+          _sensors[profile.first].stop();
+          _sensors[profile.first].close();
+        }
+      } catch (const rs2::error &e) {
+        ROS_ERROR_STREAM("Exception: " << e.what());
       }
-    } catch (const rs2::error &e) {
-      ROS_ERROR_STREAM("Exception: " << e.what());
     }
   }
 }
@@ -1862,8 +1865,10 @@ void BaseRealSenseNode::setupStreams() {
              &sensor_profile : profiles) {
       std::string module_name = sensor_profile.first;
       rs2::sensor sensor = active_sensors[module_name];
-      sensor.open(sensor_profile.second);
-      sensor.start(_sensors_callback[module_name]);
+      if (!_frames_fed_externally) {
+        sensor.open(sensor_profile.second);
+        sensor.start(_sensors_callback[module_name]);
+      }
       if (sensor.is<rs2::depth_sensor>()) {
         _depth_scale_meters = sensor.as<rs2::depth_sensor>().get_depth_scale();
       }

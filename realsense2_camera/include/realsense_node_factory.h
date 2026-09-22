@@ -74,6 +74,7 @@ namespace realsense2_camera
         bool toggle_sensor_callback(std_srvs::SetBool::Request &req, std_srvs::SetBool::Response &res);
 
         rs2::device _device;
+        std::shared_ptr<rs2::pipeline> _file_playback_pipeline; // kept alive for rosbag_filename playback (sync + repeat)
         std::shared_ptr<InterfaceRealSenseNode> _realSenseNode;
         rs2::context _ctx;
         std::string _serial_no;

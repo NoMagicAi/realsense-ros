@@ -124,6 +124,10 @@ public:
   virtual void registerDynamicReconfigCb(ros::NodeHandle &nh) override;
   virtual ~BaseRealSenseNode();
 
+  // Feeds a frame from an externally-owned rs2::pipeline (RealSenseNodeFactory's rosbag_filename
+  // handling) into frame_callback(), bypassing sensor.start(_syncer).
+  void feedFrame(rs2::frame frame) { frame_callback(frame); }
+
 public:
   enum imu_sync_method { NONE, COPY, LINEAR_INTERPOLATION };
 
@@ -378,6 +382,7 @@ private:
 
   rs2::processing_block nomagic_muxer;
   std::map<stream_index_pair, rs2::frameset> nomagic_latest_frame_buffer;
+  bool _frames_fed_externally; // true for a playback device fed via feedFrame()
 
   void nomagicSetup();
   void nomagicGetParameters();
