@@ -100,7 +100,8 @@ BaseRealSenseNode::BaseRealSenseNode(ros::NodeHandle &nodeHandle,
       _namespace(getNamespaceStr()),
       nomagic_muxer([&](rs2::frame f, rs2::frame_source &src) {
         nomagicMuxerCallback(f, src);
-      }) {
+      }),
+      _frames_fed_externally(dev.is<rs2::playback>()) {
   // Types for depth stream
   _format[RS2_STREAM_DEPTH] = RS2_FORMAT_Z16;
   _image_format[RS2_STREAM_DEPTH] = CV_16UC1; // CVBridge type
@@ -170,20 +171,22 @@ BaseRealSenseNode::~BaseRealSenseNode() {
     _monitoring_t->join();
   }
 
-  std::set<std::string> module_names;
-  for (const std::pair<stream_index_pair, std::vector<rs2::stream_profile>>
-           &profile : _enabled_profiles) {
-    try {
-      std::string module_name =
-          _sensors[profile.first].get_info(RS2_CAMERA_INFO_NAME);
-      std::pair<std::set<std::string>::iterator, bool> res =
-          module_names.insert(module_name);
-      if (res.second) {
-        _sensors[profile.first].stop();
-        _sensors[profile.first].close();
+  if (!_frames_fed_externally) {
+    std::set<std::string> module_names;
+    for (const std::pair<stream_index_pair, std::vector<rs2::stream_profile>>
+             &profile : _enabled_profiles) {
+      try {
+        std::string module_name =
+            _sensors[profile.first].get_info(RS2_CAMERA_INFO_NAME);
+        std::pair<std::set<std::string>::iterator, bool> res =
+            module_names.insert(module_name);
+        if (res.second) {
+          _sensors[profile.first].stop();
+          _sensors[profile.first].close();
+        }
+      } catch (const rs2::error &e) {
+        ROS_ERROR_STREAM("Exception: " << e.what());
       }
-    } catch (const rs2::error &e) {
-      ROS_ERROR_STREAM("Exception: " << e.what());
     }
   }
 }
@@ -1808,6 +1811,16 @@ bool BaseRealSenseNode::setBaseTime(double frame_time,
                     ? "Frame metadata isn't available! (frame_timestamp_domain "
                       "= RS2_TIMESTAMP_DOMAIN_SYSTEM_TIME)"
                     : "");
+  if (_frames_fed_externally) {
+    // Playback from rosbag_filename: frames carry their recording-time timestamps, so stamp them relative
+    // to the ROS time of the first frame instead (see frameSystemTimeSec()).
+    ROS_INFO("Playback device: stamping frames relative to the first frame's ROS time.");
+    std::lock_guard<std::mutex> lock(_playback_time_base_mutex);
+    _ros_time_base = ros::Time::now();
+    _camera_time_base = frame_time;
+    _playback_last_frame_time_ms = frame_time;
+    return true;
+  }
   if (time_domain == RS2_TIMESTAMP_DOMAIN_HARDWARE_CLOCK) {
     ROS_WARN("frame's time domain is HARDWARE_CLOCK. Timestamps may reset "
              "periodically.");
@@ -1818,7 +1831,28 @@ bool BaseRealSenseNode::setBaseTime(double frame_time,
   return false;
 }
 
+double BaseRealSenseNode::nomagicPlaybackFrameTimeSec(double frame_time_ms) {
+  // Same conversion as frameSystemTimeSec() in playback, but without re-basing: GetLatestFrame returns frames
+  // from a buffer, which may be older than the last one seen and must not be mistaken for a bag restart.
+  std::lock_guard<std::mutex> lock(_playback_time_base_mutex);
+  return _ros_time_base.toSec() + (frame_time_ms - _camera_time_base) / 1000.0;
+}
+
 double BaseRealSenseNode::frameSystemTimeSec(rs2::frame frame) {
+  if (_frames_fed_externally) {
+    // Frames of one frameset differ by a few ms, so only a jump back by more than this means the bag
+    // restarted (repeat_playback) and the time base has to follow it.
+    constexpr double PLAYBACK_RESTART_THRESHOLD_MS = 1000.0;
+    std::lock_guard<std::mutex> lock(_playback_time_base_mutex);
+    const double frame_time_ms = frame.get_timestamp();
+    if (frame_time_ms < _playback_last_frame_time_ms - PLAYBACK_RESTART_THRESHOLD_MS) {
+      ROS_INFO("Playback restarted, re-basing frame timestamps.");
+      _ros_time_base = ros::Time::now();
+      _camera_time_base = frame_time_ms;
+    }
+    _playback_last_frame_time_ms = frame_time_ms;
+    return _ros_time_base.toSec() + (frame_time_ms - _camera_time_base) / 1000.0;
+  }
   if (frame.get_frame_timestamp_domain() ==
       RS2_TIMESTAMP_DOMAIN_HARDWARE_CLOCK) {
     double elapsed_camera_ms =
@@ -1862,8 +1896,10 @@ void BaseRealSenseNode::setupStreams() {
              &sensor_profile : profiles) {
       std::string module_name = sensor_profile.first;
       rs2::sensor sensor = active_sensors[module_name];
-      sensor.open(sensor_profile.second);
-      sensor.start(_sensors_callback[module_name]);
+      if (!_frames_fed_externally) {
+        sensor.open(sensor_profile.second);
+        sensor.start(_sensors_callback[module_name]);
+      }
       if (sensor.is<rs2::depth_sensor>()) {
         _depth_scale_meters = sensor.as<rs2::depth_sensor>().get_depth_scale();
       }
@@ -2832,7 +2868,8 @@ bool BaseRealSenseNode::nomagicGetLatestFrameCallback(
 
   response.image =
       *nomagicFrameToMessage(is_aligned_depth ? DEPTH : stream, final_frame);
-  response.frame_timestamp = final_frame.get_timestamp() / 1000.0;
+  response.frame_timestamp = _frames_fed_externally ? nomagicPlaybackFrameTimeSec(final_frame.get_timestamp())
+                                                    : final_frame.get_timestamp() / 1000.0;
   response.response_timestamp = nomagicGetUnixTimestamp();
   return true;
 }
