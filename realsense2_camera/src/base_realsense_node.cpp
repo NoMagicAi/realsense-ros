@@ -1831,6 +1831,13 @@ bool BaseRealSenseNode::setBaseTime(double frame_time,
   return false;
 }
 
+double BaseRealSenseNode::nomagicPlaybackFrameTimeSec(double frame_time_ms) {
+  // Same conversion as frameSystemTimeSec() in playback, but without re-basing: GetLatestFrame returns frames
+  // from a buffer, which may be older than the last one seen and must not be mistaken for a bag restart.
+  std::lock_guard<std::mutex> lock(_playback_time_base_mutex);
+  return _ros_time_base.toSec() + (frame_time_ms - _camera_time_base) / 1000.0;
+}
+
 double BaseRealSenseNode::frameSystemTimeSec(rs2::frame frame) {
   if (_frames_fed_externally) {
     // Frames of one frameset differ by a few ms, so only a jump back by more than this means the bag
@@ -2861,7 +2868,8 @@ bool BaseRealSenseNode::nomagicGetLatestFrameCallback(
 
   response.image =
       *nomagicFrameToMessage(is_aligned_depth ? DEPTH : stream, final_frame);
-  response.frame_timestamp = final_frame.get_timestamp() / 1000.0;
+  response.frame_timestamp = _frames_fed_externally ? nomagicPlaybackFrameTimeSec(final_frame.get_timestamp())
+                                                    : final_frame.get_timestamp() / 1000.0;
   response.response_timestamp = nomagicGetUnixTimestamp();
   return true;
 }
