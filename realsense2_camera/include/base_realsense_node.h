@@ -123,7 +123,7 @@ public:
   virtual void publishTopics() override;
   virtual void registerDynamicReconfigCb(ros::NodeHandle &nh) override;
   virtual ~BaseRealSenseNode();
-  virtual void feedFrame(rs2::frame frame) override { frame_callback(frame); }
+  virtual void feedFrame(rs2::frame frame) override;
 
 public:
   enum imu_sync_method { NONE, COPY, LINEAR_INTERPOLATION };

@@ -1653,6 +1653,8 @@ void BaseRealSenseNode::pose_callback(rs2::frame frame) {
   publishMetadata(frame, _frame_id[POSE]);
 }
 
+void BaseRealSenseNode::feedFrame(rs2::frame frame) { frame_callback(frame); }
+
 void BaseRealSenseNode::frame_callback(rs2::frame frame) {
   _synced_imu_publisher->Pause();
 
