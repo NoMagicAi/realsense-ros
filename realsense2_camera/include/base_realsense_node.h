@@ -122,8 +122,8 @@ public:
   virtual void toggleSensors(bool enabled) override;
   virtual void publishTopics() override;
   virtual void registerDynamicReconfigCb(ros::NodeHandle &nh) override;
-  virtual ~BaseRealSenseNode();
   virtual void feedFrame(rs2::frame frame) override;
+  virtual ~BaseRealSenseNode();
 
 public:
   enum imu_sync_method { NONE, COPY, LINEAR_INTERPOLATION };
