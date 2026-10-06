@@ -171,22 +171,24 @@ BaseRealSenseNode::~BaseRealSenseNode() {
     _monitoring_t->join();
   }
 
-  if (!_frames_fed_externally) {
-    std::set<std::string> module_names;
-    for (const std::pair<stream_index_pair, std::vector<rs2::stream_profile>>
-             &profile : _enabled_profiles) {
-      try {
-        std::string module_name =
-            _sensors[profile.first].get_info(RS2_CAMERA_INFO_NAME);
-        std::pair<std::set<std::string>::iterator, bool> res =
-            module_names.insert(module_name);
-        if (res.second) {
-          _sensors[profile.first].stop();
-          _sensors[profile.first].close();
-        }
-      } catch (const rs2::error &e) {
-        ROS_ERROR_STREAM("Exception: " << e.what());
+  if (_frames_fed_externally) {
+    return;
+  }
+
+  std::set<std::string> module_names;
+  for (const std::pair<stream_index_pair, std::vector<rs2::stream_profile>>
+           &profile : _enabled_profiles) {
+    try {
+      std::string module_name =
+          _sensors[profile.first].get_info(RS2_CAMERA_INFO_NAME);
+      std::pair<std::set<std::string>::iterator, bool> res =
+          module_names.insert(module_name);
+      if (res.second) {
+        _sensors[profile.first].stop();
+        _sensors[profile.first].close();
       }
+    } catch (const rs2::error &e) {
+      ROS_ERROR_STREAM("Exception: " << e.what());
     }
   }
 }
