@@ -1825,7 +1825,6 @@ bool BaseRealSenseNode::setBaseTime(double frame_time,
 
 double BaseRealSenseNode::frameSystemTimeSec(rs2::frame frame) {
   if (_frames_fed_externally) {
-    // Playback: recorded timestamps are from the recording time, stamp frames with the current time instead
     return ros::Time::now().toSec();
   }
   if (frame.get_frame_timestamp_domain() ==
