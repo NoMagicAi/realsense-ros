@@ -197,7 +197,6 @@ private:
   void setupStreams();
   bool setBaseTime(double frame_time, rs2_timestamp_domain time_domain);
   double frameSystemTimeSec(rs2::frame frame);
-  double nomagicPlaybackFrameTimeSec(double frame_time_ms);
   cv::Mat &fix_depth_scale(const cv::Mat &from_image, cv::Mat &to_image);
   void clip_depth(rs2::depth_frame depth_frame, float clipping_dist);
   void updateStreamCalibData(const rs2::video_stream_profile &video_profile);
@@ -384,8 +383,6 @@ private:
   rs2::processing_block nomagic_muxer;
   std::map<stream_index_pair, rs2::frameset> nomagic_latest_frame_buffer;
   bool _frames_fed_externally;
-  std::mutex _playback_time_base_mutex; // guards _ros_time_base/_camera_time_base re-basing on playback loop
-  double _playback_last_frame_time_ms = 0.0; // to detect the bag restarting (timestamps jumping back)
 
   void nomagicSetup();
   void nomagicGetParameters();

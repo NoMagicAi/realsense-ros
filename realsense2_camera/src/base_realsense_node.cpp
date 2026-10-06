@@ -1813,16 +1813,6 @@ bool BaseRealSenseNode::setBaseTime(double frame_time,
                     ? "Frame metadata isn't available! (frame_timestamp_domain "
                       "= RS2_TIMESTAMP_DOMAIN_SYSTEM_TIME)"
                     : "");
-  if (_frames_fed_externally) {
-    // Playback from rosbag_filename: frames carry their recording-time timestamps, so stamp them relative
-    // to the ROS time of the first frame instead (see frameSystemTimeSec()).
-    ROS_INFO("Playback device: stamping frames relative to the first frame's ROS time.");
-    std::lock_guard<std::mutex> lock(_playback_time_base_mutex);
-    _ros_time_base = ros::Time::now();
-    _camera_time_base = frame_time;
-    _playback_last_frame_time_ms = frame_time;
-    return true;
-  }
   if (time_domain == RS2_TIMESTAMP_DOMAIN_HARDWARE_CLOCK) {
     ROS_WARN("frame's time domain is HARDWARE_CLOCK. Timestamps may reset "
              "periodically.");
@@ -1833,27 +1823,10 @@ bool BaseRealSenseNode::setBaseTime(double frame_time,
   return false;
 }
 
-double BaseRealSenseNode::nomagicPlaybackFrameTimeSec(double frame_time_ms) {
-  // Same conversion as frameSystemTimeSec() in playback, but without re-basing: GetLatestFrame returns frames
-  // from a buffer, which may be older than the last one seen and must not be mistaken for a bag restart.
-  std::lock_guard<std::mutex> lock(_playback_time_base_mutex);
-  return _ros_time_base.toSec() + (frame_time_ms - _camera_time_base) / 1000.0;
-}
-
 double BaseRealSenseNode::frameSystemTimeSec(rs2::frame frame) {
   if (_frames_fed_externally) {
-    // Frames of one frameset differ by a few ms, so only a jump back by more than this means the bag
-    // restarted (repeat_playback) and the time base has to follow it.
-    constexpr double PLAYBACK_RESTART_THRESHOLD_MS = 1000.0;
-    std::lock_guard<std::mutex> lock(_playback_time_base_mutex);
-    const double frame_time_ms = frame.get_timestamp();
-    if (frame_time_ms < _playback_last_frame_time_ms - PLAYBACK_RESTART_THRESHOLD_MS) {
-      ROS_INFO("Playback restarted, re-basing frame timestamps.");
-      _ros_time_base = ros::Time::now();
-      _camera_time_base = frame_time_ms;
-    }
-    _playback_last_frame_time_ms = frame_time_ms;
-    return _ros_time_base.toSec() + (frame_time_ms - _camera_time_base) / 1000.0;
+    // Playback: recorded timestamps are from the recording time, stamp frames with the current time instead
+    return ros::Time::now().toSec();
   }
   if (frame.get_frame_timestamp_domain() ==
       RS2_TIMESTAMP_DOMAIN_HARDWARE_CLOCK) {
@@ -2870,7 +2843,7 @@ bool BaseRealSenseNode::nomagicGetLatestFrameCallback(
 
   response.image =
       *nomagicFrameToMessage(is_aligned_depth ? DEPTH : stream, final_frame);
-  response.frame_timestamp = _frames_fed_externally ? nomagicPlaybackFrameTimeSec(final_frame.get_timestamp())
+  response.frame_timestamp = _frames_fed_externally ? ros::Time::now().toSec()
                                                     : final_frame.get_timestamp() / 1000.0;
   response.response_timestamp = nomagicGetUnixTimestamp();
   return true;
