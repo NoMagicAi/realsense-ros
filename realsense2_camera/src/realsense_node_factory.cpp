@@ -287,10 +287,9 @@ void RealSenseNodeFactory::initialize(const ros::WallTimerEvent &ignored)
 			}
 			_file_playback_pipeline->start(cfg, [this](rs2::frame f)
 			{
-				auto base_node = std::dynamic_pointer_cast<BaseRealSenseNode>(_realSenseNode);
-				if (base_node)
+				if (_realSenseNode)
 				{
-					base_node->feedFrame(f);
+					_realSenseNode->feedFrame(f);
 				}
 			});
 		}

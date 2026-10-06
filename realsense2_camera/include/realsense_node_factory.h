@@ -51,6 +51,7 @@ namespace realsense2_camera
         virtual void publishTopics() = 0;
         virtual void toggleSensors(bool enabled) = 0;
         virtual void registerDynamicReconfigCb(ros::NodeHandle& nh) = 0;
+        virtual void feedFrame(rs2::frame frame) = 0;
         virtual ~InterfaceRealSenseNode() = default;
     };
 

@@ -123,10 +123,7 @@ public:
   virtual void publishTopics() override;
   virtual void registerDynamicReconfigCb(ros::NodeHandle &nh) override;
   virtual ~BaseRealSenseNode();
-
-  // Feeds a frame from an externally-owned rs2::pipeline (RealSenseNodeFactory's rosbag_filename
-  // handling) into frame_callback(), bypassing sensor.start(_syncer).
-  void feedFrame(rs2::frame frame) { frame_callback(frame); }
+  virtual void feedFrame(rs2::frame frame) override { frame_callback(frame); }
 
 public:
   enum imu_sync_method { NONE, COPY, LINEAR_INTERPOLATION };
