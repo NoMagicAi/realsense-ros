@@ -55,6 +55,11 @@ RealSenseNodeFactory::RealSenseNodeFactory():
 
 RealSenseNodeFactory::~RealSenseNodeFactory()
 {
+	// Stop the playback callback before _realSenseNode (which it calls into) is destroyed
+	if (_file_playback_pipeline)
+	{
+		_file_playback_pipeline->stop();
+	}
 	_is_alive = false;
 	if (_query_thread.joinable())
 	{
@@ -274,7 +279,16 @@ void RealSenseNodeFactory::initialize(const ros::WallTimerEvent &ignored)
 			rs2::config cfg;
 			cfg.enable_device_from_file(rosbag_filename.c_str(), /*repeat_playback=*/true);
 			cfg.enable_all_streams();
-			auto profile = _file_playback_pipeline->start(cfg, [this](rs2::frame f)
+			// resolve() opens the playback device without streaming; start() below reuses this resolved profile
+			_device = cfg.resolve(*_file_playback_pipeline).get_device();
+			_serial_no = _device.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
+
+			if (_device)
+			{
+				StartDevice();
+			}
+			// Start streaming only once the node is fully set up, so the callback never sees a half-initialized node
+			_file_playback_pipeline->start(cfg, [this](rs2::frame f)
 			{
 				auto base_node = std::dynamic_pointer_cast<BaseRealSenseNode>(_realSenseNode);
 				if (base_node)
@@ -282,13 +296,6 @@ void RealSenseNodeFactory::initialize(const ros::WallTimerEvent &ignored)
 					base_node->feedFrame(f);
 				}
 			});
-			_device = profile.get_device();
-			_serial_no = _device.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
-
-			if (_device)
-			{
-				StartDevice();
-			}
 		}
 		else
 		{
