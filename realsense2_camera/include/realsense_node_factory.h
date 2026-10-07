@@ -64,6 +64,7 @@ namespace realsense2_camera
     private:
         void closeDevice();
         void StartDevice();
+        void StartPlaybackDevice();
         void change_device_callback(rs2::event_information& info);
         void getDevice(rs2::device_list list);
         virtual void onInit() override;

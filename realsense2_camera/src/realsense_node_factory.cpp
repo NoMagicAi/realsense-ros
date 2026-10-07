@@ -287,10 +287,7 @@ void RealSenseNodeFactory::initialize(const ros::WallTimerEvent &ignored)
 			_device = cfg.resolve(*_file_playback_pipeline).get_device();
 			_serial_no = _device.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
 
-			if (_device)
-			{
-				StartDevice();
-			}
+			StartPlaybackDevice();
 			_file_playback_pipeline->start(cfg, [this](rs2::frame f)
 			{
 				if (_realSenseNode)
@@ -409,6 +406,14 @@ void RealSenseNodeFactory::StartDevice()
 	{
 		ROS_ERROR_STREAM("Exception: " << e.what());
 	}
+}
+
+void RealSenseNodeFactory::StartPlaybackDevice()
+{
+	ros::NodeHandle nh = getNodeHandle();
+	ros::NodeHandle privateNh = getPrivateNodeHandle();
+	_realSenseNode = std::make_shared<BaseRealSenseNode>(nh, privateNh, _device, _serial_no);
+	_realSenseNode->publishTopics();
 }
 
 void RealSenseNodeFactory::reset()
