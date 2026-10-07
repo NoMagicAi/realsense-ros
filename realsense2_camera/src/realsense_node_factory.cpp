@@ -232,6 +232,12 @@ void RealSenseNodeFactory::change_device_callback(rs2::event_information& info)
 
 bool RealSenseNodeFactory::toggle_sensor_callback(std_srvs::SetBool::Request &req, std_srvs::SetBool::Response &res)
 {
+  if (_file_playback_pipeline)
+  {
+    res.success = false;
+    res.message = "Toggling sensors is not supported during bag playback";
+    return true;
+  }
   if (req.data)
     ROS_INFO_STREAM("toggling sensor : ON");
   else
