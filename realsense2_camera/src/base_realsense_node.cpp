@@ -1654,6 +1654,7 @@ void BaseRealSenseNode::pose_callback(rs2::frame frame) {
 }
 
 void BaseRealSenseNode::feedFrame(rs2::frame frame) {
+  _last_feed_unix_ts = nomagicGetUnixTimestamp();
   multiple_message_callback(frame, _imu_sync_method);
 }
 
@@ -2846,7 +2847,7 @@ bool BaseRealSenseNode::nomagicGetLatestFrameCallback(
 
   response.image =
       *nomagicFrameToMessage(is_aligned_depth ? DEPTH : stream, final_frame);
-  response.frame_timestamp = _is_playback ? ros::Time::now().toSec()
+  response.frame_timestamp = _is_playback ? _last_feed_unix_ts.load()
                                           : final_frame.get_timestamp() / 1000.0;
   response.response_timestamp = nomagicGetUnixTimestamp();
   return true;
