@@ -55,10 +55,6 @@ RealSenseNodeFactory::RealSenseNodeFactory():
 
 RealSenseNodeFactory::~RealSenseNodeFactory()
 {
-	if (_file_playback_pipeline)
-	{
-		_file_playback_pipeline->stop();
-	}
 	_is_alive = false;
 	if (_query_thread.joinable())
 	{
