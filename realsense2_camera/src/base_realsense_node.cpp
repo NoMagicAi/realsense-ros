@@ -101,7 +101,7 @@ BaseRealSenseNode::BaseRealSenseNode(ros::NodeHandle &nodeHandle,
       nomagic_muxer([&](rs2::frame f, rs2::frame_source &src) {
         nomagicMuxerCallback(f, src);
       }),
-      _frames_fed_externally(dev.is<rs2::playback>()) {
+      _is_playback(dev.is<rs2::playback>()) {
   // Types for depth stream
   _format[RS2_STREAM_DEPTH] = RS2_FORMAT_Z16;
   _image_format[RS2_STREAM_DEPTH] = CV_16UC1; // CVBridge type
@@ -171,7 +171,7 @@ BaseRealSenseNode::~BaseRealSenseNode() {
     _monitoring_t->join();
   }
 
-  if (_frames_fed_externally) {
+  if (_is_playback) {
     return;
   }
 
@@ -1826,7 +1826,7 @@ bool BaseRealSenseNode::setBaseTime(double frame_time,
 }
 
 double BaseRealSenseNode::frameSystemTimeSec(rs2::frame frame) {
-  if (_frames_fed_externally) {
+  if (_is_playback) {
     return ros::Time::now().toSec();
   }
   if (frame.get_frame_timestamp_domain() ==
@@ -1872,7 +1872,7 @@ void BaseRealSenseNode::setupStreams() {
              &sensor_profile : profiles) {
       std::string module_name = sensor_profile.first;
       rs2::sensor sensor = active_sensors[module_name];
-      if (!_frames_fed_externally) {
+      if (!_is_playback) {
         sensor.open(sensor_profile.second);
         sensor.start(_sensors_callback[module_name]);
       }
@@ -2844,8 +2844,8 @@ bool BaseRealSenseNode::nomagicGetLatestFrameCallback(
 
   response.image =
       *nomagicFrameToMessage(is_aligned_depth ? DEPTH : stream, final_frame);
-  response.frame_timestamp = _frames_fed_externally ? ros::Time::now().toSec()
-                                                    : final_frame.get_timestamp() / 1000.0;
+  response.frame_timestamp = _is_playback ? ros::Time::now().toSec()
+                                          : final_frame.get_timestamp() / 1000.0;
   response.response_timestamp = nomagicGetUnixTimestamp();
   return true;
 }

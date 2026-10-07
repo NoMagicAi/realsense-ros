@@ -379,7 +379,7 @@ private:
 
   rs2::processing_block nomagic_muxer;
   std::map<stream_index_pair, rs2::frameset> nomagic_latest_frame_buffer;
-  bool _frames_fed_externally;
+  bool _is_playback;
 
   void nomagicSetup();
   void nomagicGetParameters();
