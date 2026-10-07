@@ -100,7 +100,8 @@ BaseRealSenseNode::BaseRealSenseNode(ros::NodeHandle &nodeHandle,
       _namespace(getNamespaceStr()),
       nomagic_muxer([&](rs2::frame f, rs2::frame_source &src) {
         nomagicMuxerCallback(f, src);
-      }) {
+      }),
+      _is_playback(dev.is<rs2::playback>()) {
   // Types for depth stream
   _format[RS2_STREAM_DEPTH] = RS2_FORMAT_Z16;
   _image_format[RS2_STREAM_DEPTH] = CV_16UC1; // CVBridge type
@@ -168,6 +169,10 @@ BaseRealSenseNode::~BaseRealSenseNode() {
   _cv_monitoring.notify_one();
   if (_monitoring_t && _monitoring_t->joinable()) {
     _monitoring_t->join();
+  }
+
+  if (_is_playback) {
+    return;
   }
 
   std::set<std::string> module_names;
@@ -1648,6 +1653,11 @@ void BaseRealSenseNode::pose_callback(rs2::frame frame) {
   publishMetadata(frame, _frame_id[POSE]);
 }
 
+void BaseRealSenseNode::feedFrame(rs2::frame frame) {
+  _last_feed_unix_ts = nomagicGetUnixTimestamp();
+  multiple_message_callback(frame, _imu_sync_method);
+}
+
 void BaseRealSenseNode::frame_callback(rs2::frame frame) {
   _synced_imu_publisher->Pause();
 
@@ -1819,6 +1829,9 @@ bool BaseRealSenseNode::setBaseTime(double frame_time,
 }
 
 double BaseRealSenseNode::frameSystemTimeSec(rs2::frame frame) {
+  if (_is_playback) {
+    return ros::Time::now().toSec();
+  }
   if (frame.get_frame_timestamp_domain() ==
       RS2_TIMESTAMP_DOMAIN_HARDWARE_CLOCK) {
     double elapsed_camera_ms =
@@ -1862,8 +1875,10 @@ void BaseRealSenseNode::setupStreams() {
              &sensor_profile : profiles) {
       std::string module_name = sensor_profile.first;
       rs2::sensor sensor = active_sensors[module_name];
-      sensor.open(sensor_profile.second);
-      sensor.start(_sensors_callback[module_name]);
+      if (!_is_playback) {
+        sensor.open(sensor_profile.second);
+        sensor.start(_sensors_callback[module_name]);
+      }
       if (sensor.is<rs2::depth_sensor>()) {
         _depth_scale_meters = sensor.as<rs2::depth_sensor>().get_depth_scale();
       }
@@ -2832,7 +2847,8 @@ bool BaseRealSenseNode::nomagicGetLatestFrameCallback(
 
   response.image =
       *nomagicFrameToMessage(is_aligned_depth ? DEPTH : stream, final_frame);
-  response.frame_timestamp = final_frame.get_timestamp() / 1000.0;
+  response.frame_timestamp = _is_playback ? _last_feed_unix_ts.load()
+                                          : final_frame.get_timestamp() / 1000.0;
   response.response_timestamp = nomagicGetUnixTimestamp();
   return true;
 }

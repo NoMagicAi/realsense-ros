@@ -51,6 +51,7 @@ namespace realsense2_camera
         virtual void publishTopics() = 0;
         virtual void toggleSensors(bool enabled) = 0;
         virtual void registerDynamicReconfigCb(ros::NodeHandle& nh) = 0;
+        virtual void feedFrame(rs2::frame frame) = 0;
         virtual ~InterfaceRealSenseNode() = default;
     };
 
@@ -63,6 +64,7 @@ namespace realsense2_camera
     private:
         void closeDevice();
         void StartDevice();
+        void StartPlaybackDevice();
         void change_device_callback(rs2::event_information& info);
         void getDevice(rs2::device_list list);
         virtual void onInit() override;
@@ -75,6 +77,7 @@ namespace realsense2_camera
 
         rs2::device _device;
         std::shared_ptr<InterfaceRealSenseNode> _realSenseNode;
+        std::shared_ptr<rs2::pipeline> _file_playback_pipeline;
         rs2::context _ctx;
         std::string _serial_no;
         std::string _usb_port_id;

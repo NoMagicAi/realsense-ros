@@ -228,6 +228,12 @@ void RealSenseNodeFactory::change_device_callback(rs2::event_information& info)
 
 bool RealSenseNodeFactory::toggle_sensor_callback(std_srvs::SetBool::Request &req, std_srvs::SetBool::Response &res)
 {
+  if (_file_playback_pipeline)
+  {
+    res.success = false;
+    res.message = "Toggling sensors is not supported during bag playback";
+    return true;
+  }
   if (req.data)
     ROS_INFO_STREAM("toggling sensor : ON");
   else
@@ -268,20 +274,23 @@ void RealSenseNodeFactory::initialize(const ros::WallTimerEvent &ignored)
 
 		if (!rosbag_filename.empty())
 		{
+			ROS_INFO_STREAM("publish topics from rosbag file: " << rosbag_filename.c_str());
+
+			_file_playback_pipeline = std::make_shared<rs2::pipeline>(_ctx);
+			rs2::config cfg;
+			cfg.enable_device_from_file(rosbag_filename);
+			cfg.enable_all_streams();
+			_device = cfg.resolve(*_file_playback_pipeline).get_device();
+			_serial_no = _device.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
+
+			StartPlaybackDevice();
+			_file_playback_pipeline->start(cfg, [this](rs2::frame f)
 			{
-				ROS_INFO_STREAM("publish topics from rosbag file: " << rosbag_filename.c_str());
-				auto pipe = std::make_shared<rs2::pipeline>();
-				rs2::config cfg;
-				cfg.enable_device_from_file(rosbag_filename.c_str(), false);
-				cfg.enable_all_streams();
-				pipe->start(cfg); //File will be opened in read mode at this point
-				_device = pipe->get_active_profile().get_device();
-				_serial_no = _device.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
-			}
-			if (_device)
-			{
-				StartDevice();
-			}
+				if (_realSenseNode)
+				{
+					_realSenseNode->feedFrame(f);
+				}
+			});
 		}
 		else
 		{
@@ -393,6 +402,14 @@ void RealSenseNodeFactory::StartDevice()
 	{
 		ROS_ERROR_STREAM("Exception: " << e.what());
 	}
+}
+
+void RealSenseNodeFactory::StartPlaybackDevice()
+{
+	ros::NodeHandle nh = getNodeHandle();
+	ros::NodeHandle privateNh = getPrivateNodeHandle();
+	_realSenseNode = std::make_shared<BaseRealSenseNode>(nh, privateNh, _device, _serial_no);
+	_realSenseNode->publishTopics();
 }
 
 void RealSenseNodeFactory::reset()
